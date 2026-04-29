@@ -2,6 +2,7 @@
 
 from langgraph.graph import END, StateGraph
 
+from app.agents.ai_agents.llm_report_generator import llm_report_generator_agent
 from app.agents.metric_collector import metric_collector_agent
 from app.agents.metric_selector import metric_selector_agent
 from app.agents.project_parser import project_parser_agent
@@ -54,6 +55,12 @@ def report_generator_node(state: EvaluationState | dict[str, Any]) -> dict[str, 
     return _to_dict(new_state)
 
 
+def llm_report_generator_node(state: EvaluationState | dict[str, Any]) -> dict[str, Any]:
+    current_state = _ensure_state(state)
+    new_state = llm_report_generator_agent(current_state)
+    return _to_dict(new_state)
+
+
 def quality_guard_node(state: EvaluationState | dict[str, Any]) -> dict[str, Any]:
     current_state = _ensure_state(state)
     new_state = quality_guard_agent(current_state)
@@ -69,6 +76,7 @@ def build_graph():
     workflow.add_node("metric_collector", metric_collector_node)
     workflow.add_node("metric_selector", metric_selector_node)
     workflow.add_node("report_generator", report_generator_node)
+    workflow.add_node("llm_report_generator", llm_report_generator_node)
     workflow.add_node("quality_guard", quality_guard_node)
 
     workflow.set_entry_point("project_parser")
@@ -77,7 +85,8 @@ def build_graph():
     workflow.add_edge("type_classifier", "metric_collector")
     workflow.add_edge("metric_collector", "metric_selector")
     workflow.add_edge("metric_selector", "report_generator")
-    workflow.add_edge("report_generator", "quality_guard")
+    workflow.add_edge("report_generator", "llm_report_generator")
+    workflow.add_edge("llm_report_generator", "quality_guard")
     workflow.add_edge("quality_guard", END)
 
     return workflow.compile()
@@ -107,6 +116,9 @@ if __name__ == "__main__":
         print("overall_score:", final_state.report.overall_score)
         print("dimension_scores:", final_state.report.dimension_scores)
         print("summary:", final_state.report.summary)
+        print("strengths:", final_state.report.strengths)
+        print("risks:", final_state.report.risks)
+        print("suggestions:", final_state.report.suggestions)
 
     if final_state.quality_result:
         print("quality passed:", final_state.quality_result.passed)

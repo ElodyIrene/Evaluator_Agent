@@ -20,24 +20,38 @@
 
 #### 1. app/agents/project_parser.py
 
-输入 GitHub URL → 解析 owner/repo → 调用 GitHub Client 获取基础信息 → 把结果写入 EvaluationState
+输入 GitHub URL → 解析 owner/repo → 调用 GitHub Client 获取基础信息 → 把结果写入 state.owner、state.repo、state.basic_info
 
 #### 2. app/agents/type_classifier.py
 
-读取 basic_info → 根据 topics、description、README、language → 判断项目类型 → 写入 state.project_type
+读取 state.basic_info → 根据 topics、description、README、language → 判断项目类型 → 写入 state.project_type
 
 #### 3. app/agents/metric_collector.py
 
-读取 owner/repo → 调用 OpenDigger → 整理 GitHub 基础指标 → 写入 state.raw_metrics
+读取 state.owner 和 state.repo → 调用 OpenDigger → 整理 GitHub 基础指标 → 写入 state.raw_metrics
 
 #### 4. app/agents/metric_selector.py
 
-解析仓库 → 判断类型 → 采集 GitHub + OpenDigger 指标
+读取 state.project_type 和 state.raw_metrics → 根据项目类型选择核心评估指标 → 从 OpenDigger 时间序列中提取最新指标值 → 为每个指标添加来源和选择理由 → 写入 state.selected_metrics
 
 #### 5. app/agents/report_generator.py
 
-读取 selected_metrics → 计算初步评分 → 生成结构化 EvaluationReport → 写入 state.report
+读取 selected_metrics → 根据规则计算各维度分数 → 生成结构化 EvaluationReport → 写入 state.report
 
 #### 6. app/agents/quality_guard.py
 
-读取 state.report → 检查报告是否完整、分数是否合理、数据来源是否存在 → 把检查结果写入 state.quality_result
+读取 state.report 和 state.selected_metrics → 检查报告是否完整、分数是否合理、数据来源是否存在 → 把检查结果写入 state.quality_result
+
+### 提示词
+
+#### 1. app/prompts/llm_report_prompt.md
+
+- 给 LLM Report Agent 使用
+- 输入 GitHub/OpenDigger 指标、项目类型、规则版报告，要求 LLM 生成结构化 JSON 格式的开源项目评估报告
+
+#### 2. 
+
+### AI Agent层 —— 调用 LLM 进行复杂问题理解和处理
+
+#### 1. app/agents/ai_agents/llm_report_generator.py
+

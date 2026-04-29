@@ -3,9 +3,14 @@
 
 class Settings(BaseSettings):
     github_token: str | None = None
-    anthropic_api_key: str | None = None
-    openai_api_key: str | None = None
+
+    deepseek_base_url: str | None = None
+    deepseek_api_key: str | None = None
+
     redis_url: str = "redis://localhost:6379/0"
+
+    llm_provider: str = "deepseek"
+    model_name: str = "deepseek-v3.2"
 
     model_config = SettingsConfigDict(
         env_file=".env",
