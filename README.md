@@ -2,7 +2,7 @@
 
 ### 框架图
 
-![workflow](.\pictures\workflow.jpg)
+![workflow](https://github.com/ElodyIrene/Evaluator_Agent.git)
 
 一个基于 LangGraph 的 multi-Agent 工作流系统。用户输入 GitHub 仓库地址后，Supervisor Agent 负责调度各个任务节点。首先 Project Parser Agent 提取项目基础信息，然后 Project Type Classifier Agent 判断项目属于哪类开源项目。接着 Metric Collector Agent 调用 GitHub API 和 OpenDigger API 获取指标数据。Core Metric Selector Agent 根据项目类型筛选关键指标。随后 RAG Retrieval Agent 从知识库中检索这些指标的定义和适用场景。最后 Evaluation Judge Agent 结合指标结果和定义生成评估报告，并由 Quality Guard Agent 做一致性检查。整个过程中的状态、缓存和历史报告信息都统一保存在 Redis 中。
 
@@ -40,7 +40,7 @@
 
 #### 6. app/agents/quality_guard.py
 
-读取 state.report 和 state.selected_metrics → 检查报告是否完整、分数是否合理、数据来源是否存在 → 把检查结果写入 state.quality_result
+读取 state.report 和 state.selected_metrics → 检查报告是否完整、分数是否合理、数据来源是否存在、是否缺少关键字段 → 把检查结果写入 state.quality_result
 
 ### 提示词
 
@@ -54,4 +54,8 @@
 ### AI Agent层 —— 调用 LLM 进行复杂问题理解和处理
 
 #### 1. app/agents/ai_agents/llm_report_generator.py
+
+**利用 LLM 优化 report_generator 生成的报告**
+
+读取 state.basic_info、state.project_type、state.selected_metrics 和规则版 state.report → 读取提示词模板 → 把项目基础信息、核心指标、规则版报告填入 Prompt → 调用 LLM 生成更自然、更完整的结构化评估报告 → 解析 LLM 返回的 JSON → 校验为 `EvaluationReport` → 覆盖写入 `state.report`
 
