@@ -2,7 +2,7 @@
 
 ### 框架图
 
-![workflow](https://github.com/ElodyIrene/Evaluator_Agent.git)
+![workflow](.\pictures\workflow.jpg)
 
 一个基于 LangGraph 的 multi-Agent 工作流系统。用户输入 GitHub 仓库地址后，Supervisor Agent 负责调度各个任务节点。首先 Project Parser Agent 提取项目基础信息，然后 Project Type Classifier Agent 判断项目属于哪类开源项目。接着 Metric Collector Agent 调用 GitHub API 和 OpenDigger API 获取指标数据。Core Metric Selector Agent 根据项目类型筛选关键指标。随后 RAG Retrieval Agent 从知识库中检索这些指标的定义和适用场景。最后 Evaluation Judge Agent 结合指标结果和定义生成评估报告，并由 Quality Guard Agent 做一致性检查。整个过程中的状态、缓存和历史报告信息都统一保存在 Redis 中。
 
