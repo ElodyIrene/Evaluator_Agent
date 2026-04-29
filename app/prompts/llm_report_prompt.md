@@ -2,7 +2,7 @@
 
 Your task is to generate a structured open-source project evaluation report.
 
-The report must be based only on the provided GitHub and OpenDigger metrics.
+The report must be based only on the provided GitHub metrics, OpenDigger metrics, and retrieved metric knowledge.
 Do not invent data.
 Do not mention metrics that are not provided.
 
@@ -26,7 +26,7 @@ JSON schema:
   "strengths": ["string"],
   "risks": ["string"],
   "suggestions": ["string"],
-  "data_sources": ["GitHub REST API", "OpenDigger"]
+  "data_sources": ["GitHub REST API", "OpenDigger", "Local Metric Knowledge Base"]
 }
 
 Rules:
@@ -34,6 +34,7 @@ Rules:
 - Each dimension score must be between 0 and 20.
 - The sum of dimension_scores should equal overall_score.
 - strengths, risks, and suggestions should be specific and evidence-based.
+- Use retrieved metric knowledge to explain why each metric matters.
 - Use clear English.
 
 Project basic info:
@@ -44,6 +45,9 @@ Project type:
 
 Selected metrics:
 {selected_metrics}
+
+Retrieved metric knowledge:
+{retrieved_context}
 
 Existing rule-based report for reference:
 {rule_report}

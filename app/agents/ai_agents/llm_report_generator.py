@@ -8,6 +8,7 @@ from langchain_openai import ChatOpenAI
 from app.agents.metric_collector import metric_collector_agent
 from app.agents.metric_selector import metric_selector_agent
 from app.agents.project_parser import project_parser_agent
+from app.agents.rag_retrieval import rag_retrieval_agent
 from app.agents.report_generator import report_generator_agent
 from app.agents.type_classifier import type_classifier_agent
 from app.config import settings
@@ -47,6 +48,11 @@ def _build_prompt(state: EvaluationState) -> str:
         for metric in state.selected_metrics
     ]
 
+    retrieved_context = [
+        doc.model_dump(mode="json")
+        for doc in state.retrieved_context
+    ]
+
     rule_report = state.report.model_dump(mode="json") if state.report else None
 
     basic_info = None
@@ -67,6 +73,10 @@ def _build_prompt(state: EvaluationState) -> str:
     prompt = prompt.replace(
         "{selected_metrics}",
         json.dumps(selected_metrics, ensure_ascii=False, indent=2),
+    )
+    prompt = prompt.replace(
+        "{retrieved_context}",
+        json.dumps(retrieved_context, ensure_ascii=False, indent=2),
     )
     prompt = prompt.replace(
         "{rule_report}",
@@ -114,6 +124,9 @@ def llm_report_generator_agent(state: EvaluationState) -> EvaluationState:
         state.errors.append("Cannot generate LLM report because selected_metrics is empty.")
         return state
 
+    if not state.retrieved_context:
+        state.errors.append("Warning: retrieved_context is empty. LLM report will not use RAG knowledge.")
+
     if state.report is None:
         state = report_generator_agent(state)
 
@@ -145,15 +158,18 @@ if __name__ == "__main__":
     state = type_classifier_agent(state)
     state = metric_collector_agent(state)
     state = metric_selector_agent(state)
+    state = rag_retrieval_agent(state)
     state = report_generator_agent(state)
     state = llm_report_generator_agent(state)
 
     print("repo:", state.report.repo if state.report else None)
     print("project_type:", state.report.project_type if state.report else None)
+    print("retrieved context count:", len(state.retrieved_context))
     print("overall_score:", state.report.overall_score if state.report else None)
     print("dimension_scores:", state.report.dimension_scores if state.report else None)
     print("summary:", state.report.summary if state.report else None)
     print("strengths:", state.report.strengths if state.report else None)
     print("risks:", state.report.risks if state.report else None)
     print("suggestions:", state.report.suggestions if state.report else None)
+    print("data_sources:", state.report.data_sources if state.report else None)
     print("errors:", state.errors)

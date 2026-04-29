@@ -36,6 +36,12 @@ class SelectedMetric(BaseModel):
     reason: str
 
 
+class RetrievedDoc(BaseModel):
+    title: str
+    content: str
+    source: str
+
+
 class EvaluationReport(BaseModel):
     repo: str
     project_type: str
@@ -62,6 +68,7 @@ class EvaluationState(BaseModel):
     project_type: str | None = None
     raw_metrics: MetricBundle | None = None
     selected_metrics: list[SelectedMetric] = Field(default_factory=list)
+    retrieved_context: list[RetrievedDoc] = Field(default_factory=list)
     report: EvaluationReport | None = None
     quality_result: QualityResult | None = None
     errors: list[str] = Field(default_factory=list)

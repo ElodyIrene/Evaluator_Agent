@@ -16,7 +16,11 @@
 
 获取 OpenDigger 的开源指标
 
-### 规则型Agent层 —— 依赖代码进行逻辑处理
+#### 3. app/tools/redis_store.py
+
+通过 JSON 格式缓存指标结果、保存历史报告、保存任务状态
+
+### 规则型Agent层 —— 依赖代码进行稳定的逻辑处理
 
 #### 1. app/agents/project_parser.py
 
@@ -34,11 +38,15 @@
 
 读取 state.project_type 和 state.raw_metrics → 根据项目类型选择核心评估指标 → 从 OpenDigger 时间序列中提取最新指标值 → 为每个指标添加来源和选择理由 → 写入 state.selected_metrics
 
-#### 5. app/agents/report_generator.py
+#### 5. app/agents/rag_retrieval.py
+
+读取 selected_metrics → 读取 knowledge_base/metrics.md → 根据指标名找到对应知识库章节 → 把指标解释写入 state.retrieved_context
+
+#### 6. app/agents/report_generator.py
 
 读取 selected_metrics → 根据规则计算各维度分数 → 生成结构化 EvaluationReport → 写入 state.report
 
-#### 6. app/agents/quality_guard.py
+#### 7. app/agents/quality_guard.py
 
 读取 state.report 和 state.selected_metrics → 检查报告是否完整、分数是否合理、数据来源是否存在、是否缺少关键字段 → 把检查结果写入 state.quality_result
 
@@ -47,9 +55,7 @@
 #### 1. app/prompts/llm_report_prompt.md
 
 - 给 LLM Report Agent 使用
-- 输入 GitHub/OpenDigger 指标、项目类型、规则版报告，要求 LLM 生成结构化 JSON 格式的开源项目评估报告
-
-#### 2. 
+- 输入 项目基础信息、项目类型、GitHub/OpenDigger 核心指标、RAG 检索得到的指标解释、规则版报告，要求 LLM 生成结构化 JSON 格式的开源项目评估报告
 
 ### AI Agent层 —— 调用 LLM 进行复杂问题理解和处理
 
@@ -57,5 +63,22 @@
 
 **利用 LLM 优化 report_generator 生成的报告**
 
-读取 state.basic_info、state.project_type、state.selected_metrics 和规则版 state.report → 读取提示词模板 → 把项目基础信息、核心指标、规则版报告填入 Prompt → 调用 LLM 生成更自然、更完整的结构化评估报告 → 解析 LLM 返回的 JSON → 校验为 `EvaluationReport` → 覆盖写入 `state.report`
+读取 state.basic_info、state.project_type、state.selected_metrics 和规则版 state.report → 读取提示词模板 → 把
+
+- 项目基础信息
+- 核心指标及结果
+- 本地指标知识库指标解释
+- 规则版报告
+
+填入 Prompt → 调用 LLM 生成更自然、更完整的结构化评估报告 → 解析 LLM 返回的 JSON → 校验为 `EvaluationReport` → 覆盖写入 `state.report`
+
+### 知识库
+
+#### 1. knowledge_base/metrics.md (RAG DEMO)
+
+- 给 RAG Retrieval Agent 使用。
+- 保存 openrank、activity、bus_factor、issue_response_time 等指标的定义、适用场景和局限性。
+- LLM 生成报告时，可以引用这些解释，让报告更可解释。
+
+
 

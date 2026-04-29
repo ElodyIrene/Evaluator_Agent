@@ -7,6 +7,7 @@ from app.agents.metric_collector import metric_collector_agent
 from app.agents.metric_selector import metric_selector_agent
 from app.agents.project_parser import project_parser_agent
 from app.agents.quality_guard import quality_guard_agent
+from app.agents.rag_retrieval import rag_retrieval_agent
 from app.agents.report_generator import report_generator_agent
 from app.agents.type_classifier import type_classifier_agent
 from app.schemas import EvaluationState
@@ -49,6 +50,12 @@ def metric_selector_node(state: EvaluationState | dict[str, Any]) -> dict[str, A
     return _to_dict(new_state)
 
 
+def rag_retrieval_node(state: EvaluationState | dict[str, Any]) -> dict[str, Any]:
+    current_state = _ensure_state(state)
+    new_state = rag_retrieval_agent(current_state)
+    return _to_dict(new_state)
+
+
 def report_generator_node(state: EvaluationState | dict[str, Any]) -> dict[str, Any]:
     current_state = _ensure_state(state)
     new_state = report_generator_agent(current_state)
@@ -75,6 +82,7 @@ def build_graph():
     workflow.add_node("type_classifier", type_classifier_node)
     workflow.add_node("metric_collector", metric_collector_node)
     workflow.add_node("metric_selector", metric_selector_node)
+    workflow.add_node("rag_retrieval", rag_retrieval_node)
     workflow.add_node("report_generator", report_generator_node)
     workflow.add_node("llm_report_generator", llm_report_generator_node)
     workflow.add_node("quality_guard", quality_guard_node)
@@ -84,7 +92,8 @@ def build_graph():
     workflow.add_edge("project_parser", "type_classifier")
     workflow.add_edge("type_classifier", "metric_collector")
     workflow.add_edge("metric_collector", "metric_selector")
-    workflow.add_edge("metric_selector", "report_generator")
+    workflow.add_edge("metric_selector", "rag_retrieval")
+    workflow.add_edge("rag_retrieval", "report_generator")
     workflow.add_edge("report_generator", "llm_report_generator")
     workflow.add_edge("llm_report_generator", "quality_guard")
     workflow.add_edge("quality_guard", END)
@@ -111,6 +120,7 @@ if __name__ == "__main__":
     print("repo:", final_state.repo)
     print("project_type:", final_state.project_type)
     print("selected metric count:", len(final_state.selected_metrics))
+    print("retrieved context count:", len(final_state.retrieved_context))
 
     if final_state.report:
         print("overall_score:", final_state.report.overall_score)
