@@ -3,6 +3,7 @@
 from langgraph.graph import END, StateGraph
 
 from app.agents.ai_agents.llm_report_generator import llm_report_generator_agent
+from app.agents.ai_agents.llm_quality_reviewer import llm_quality_reviewer_agent
 from app.agents.metric_collector import metric_collector_agent
 from app.agents.metric_selector import metric_selector_agent
 from app.agents.project_parser import project_parser_agent
@@ -57,19 +58,20 @@ def _route_after_quality_guard(state: EvaluationState | dict[str, Any]) -> str:
     """Supervisor decision after Quality Guard.
 
     If the report fails quality checks, retry LLM report generation once.
+    Otherwise, continue to LLM Quality Reviewer.
     """
     current_state = _ensure_state(state)
 
     if current_state.quality_result is None:
-        return "end"
+        return "review"
 
     if current_state.quality_result.passed:
-        return "end"
+        return "review"
 
     if current_state.retry_count < MAX_QUALITY_RETRY:
         return "retry"
 
-    return "end"
+    return "review"
 
 
 def project_parser_node(state: EvaluationState | dict[str, Any]) -> dict[str, Any]:
@@ -119,6 +121,11 @@ def quality_guard_node(state: EvaluationState | dict[str, Any]) -> dict[str, Any
     new_state = quality_guard_agent(current_state)
     return _to_dict(new_state)
 
+def llm_quality_reviewer_node(state: EvaluationState | dict[str, Any]) -> dict[str, Any]:
+    current_state = _ensure_state(state)
+    new_state = llm_quality_reviewer_agent(current_state)
+    return _to_dict(new_state)
+
 
 def prepare_quality_retry_node(state: EvaluationState | dict[str, Any]) -> dict[str, Any]:
     """Prepare state before retrying LLM report generation."""
@@ -142,6 +149,7 @@ def build_graph():
     workflow.add_node("report_generator", report_generator_node)
     workflow.add_node("llm_report_generator", llm_report_generator_node)
     workflow.add_node("quality_guard", quality_guard_node)
+    workflow.add_node("llm_quality_reviewer", llm_quality_reviewer_node)
     workflow.add_node("prepare_quality_retry", prepare_quality_retry_node)
 
     workflow.set_entry_point("project_parser")
@@ -214,11 +222,12 @@ def build_graph():
         _route_after_quality_guard,
         {
             "retry": "prepare_quality_retry",
-            "end": END,
+            "review": "llm_quality_reviewer",
         },
     )
 
     workflow.add_edge("prepare_quality_retry", "llm_report_generator")
+    workflow.add_edge("llm_quality_reviewer", END)
 
     return workflow.compile()
 
@@ -259,3 +268,4 @@ if __name__ == "__main__":
         print("quality suggestions:", final_state.quality_result.suggestions)
 
     print("errors:", final_state.errors)
+

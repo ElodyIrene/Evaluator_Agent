@@ -12,9 +12,6 @@ class Settings(BaseSettings):
     llm_provider: str = "deepseek"
     model_name: str = "deepseek-v3.2"
 
-    # 提示词配置
-    llm_report_prompt_version: str = "v1"
-
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

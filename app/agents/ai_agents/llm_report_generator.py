@@ -15,25 +15,12 @@ from app.config import settings
 from app.schemas import EvaluationReport, EvaluationState
 
 
-PROMPT_DIR = Path("app/prompts/llm_report")
-
-
-def _get_prompt_path() -> Path:
-    """Get the prompt file path for the configured LLM report prompt version."""
-    version = settings.llm_report_prompt_version.strip()
-    prompt_path = PROMPT_DIR / f"{version}.md"
-
-    if not prompt_path.exists():
-        raise FileNotFoundError(
-            f"LLM report prompt version '{version}' was not found at {prompt_path}"
-        )
-
-    return prompt_path
+PROMPT_PATH = Path("app/prompts/llm_report_prompt.md")
 
 
 def _load_prompt_template() -> str:
     """Load the LLM report prompt from a markdown file."""
-    return _get_prompt_path().read_text(encoding="utf-8")
+    return PROMPT_PATH.read_text(encoding="utf-8")
 
 
 def _extract_json(text: str) -> dict[str, Any]:
@@ -103,18 +90,6 @@ def _create_llm() -> ChatOpenAI:
     """Create an OpenAI-compatible chat model client."""
     provider = settings.llm_provider.lower()
 
-    if provider == "openai":
-        if not settings.openai_api_key:
-            raise ValueError("OPENAI_API_KEY is missing.")
-
-        return ChatOpenAI(
-            model=settings.model_name,
-            temperature=0,
-            api_key=settings.openai_api_key,
-            timeout=60,
-            max_retries=2,
-        )
-
     if provider == "deepseek":
         if not settings.deepseek_api_key:
             raise ValueError("DEEPSEEK_API_KEY is missing.")
@@ -138,9 +113,7 @@ def llm_report_generator_agent(state: EvaluationState) -> EvaluationState:
         return state
 
     if not state.retrieved_context:
-        state.errors.append(
-            "Warning: retrieved_context is empty. LLM report will not use RAG knowledge."
-        )
+        state.errors.append("Warning: retrieved_context is empty. LLM report will not use RAG knowledge.")
 
     if state.report is None:
         state = report_generator_agent(state)
@@ -159,9 +132,7 @@ def llm_report_generator_agent(state: EvaluationState) -> EvaluationState:
         state.report = EvaluationReport.model_validate(data)
 
     except Exception as error:
-        state.errors.append(
-            f"LLM report generation failed: {error}. Using rule-based report fallback."
-        )
+        state.errors.append(f"LLM report generation failed: {error}. Using rule-based report fallback.")
 
     return state
 

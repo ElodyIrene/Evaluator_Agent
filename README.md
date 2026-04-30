@@ -553,7 +553,9 @@ docs/performance.md
 
 —— 项目功能增强 ——
 
-- [ ] LLM Quality Reviewer：用 LLM 检查报告是否空泛、是否误读指标、是否缺少依据
+- [x] LLM Quality Reviewer：用 LLM 检查报告是否空泛、是否误读指标、是否缺少依据
+- [ ] 基于 LLM Quality Reviewer 反馈自动重写报告
+- [ ] 补充 AI Agent：实现项目类型分类 Agent、指标筛选 Agent
 - [ ] 风险诊断 risk_diagnosis：为每个风险补充证据、原因和建议
 - [ ] 历史报告版本管理：保存同一仓库的多次评估结果，支持趋势分析
 - [ ] 多轮追问：支持基于历史报告和指标上下文继续提问

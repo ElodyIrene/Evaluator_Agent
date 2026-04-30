@@ -1156,7 +1156,89 @@ LLM report generation failed: Unsupported LLM provider: unknown. Using rule-base
 4. Quality Guard 可以继续检查规则版报告。
 5. 系统整体可用性更高。
 
-## 17. Prompt 模板
+## 17. `app/agents/ai_agents/llm_quality_reviewer.py`
+
+`llm_quality_reviewer.py` 是语义质量审查 Agent。
+
+它在规则版 `quality_guard.py` 之后执行，用于检查最终报告是否存在语义问题。
+
+规则版 Quality Guard 主要检查：
+
+```text
+字段是否完整
+分数是否越界
+data_sources 是否存在
+selected_metrics 是否为空
+```
+
+LLM Quality Reviewer 进一步检查：
+
+```text
+报告是否有指标依据
+是否误读指标
+是否存在过度推断
+风险和建议是否匹配
+结论是否前后矛盾
+报告是否空泛
+```
+
+### 输入
+
+```text
+state.report
+state.selected_metrics
+state.retrieved_context
+state.quality_result
+```
+
+### 工作流程
+
+```text
+读取最终报告
+→ 读取 selected_metrics
+→ 读取 retrieved_context
+→ 读取规则版 quality_result
+→ 填充 llm_quality_reviewer_prompt.md
+→ 调用 LLM
+→ 输出 QualityResult
+→ 覆盖写入 state.quality_result
+```
+
+### 输出
+
+```text
+state.quality_result
+```
+
+示例：
+
+```json
+{
+  "passed": false,
+  "issues": [
+    "The report overclaims that 15 days is fast response time without benchmark."
+  ],
+  "suggestions": [
+    "Clarify the metric meaning and avoid calling it fast without comparison."
+  ]
+}
+```
+
+### 设计原因
+
+规则版 Quality Guard 只能检查结构和字段，无法判断报告是否真正有依据。
+
+LLM Quality Reviewer 用于补充语义级质量检查，帮助发现：
+
+- 指标解释错误
+- 结论缺少证据
+- 风险描述空泛
+- 建议和风险不匹配
+- 报告前后矛盾
+
+这让系统的质量控制从“格式检查”升级为“语义审查”。
+
+## 18. Prompt 模板
 
 Prompt 文件位于：
 
@@ -1164,35 +1246,44 @@ Prompt 文件位于：
 app/prompts/
 ```
 
-当前已实现：
+当前已实现两个 Prompt 文件：
 
 ```text
 app/prompts/llm_report_prompt.md
+app/prompts/llm_quality_reviewer_prompt.md
 ```
 
-### 17.1 `app/prompts/llm_report_prompt.md`
+Prompt 没有直接写死在 Python 代码里，而是放到独立 Markdown 文件中。
 
-这个 Prompt 给 LLM Report Agent 使用。
+这样做的好处：
 
-主要作用：
+- 代码更干净
+- Prompt 更容易修改
+- 不同 AI Agent 可以维护不同 Prompt
+- 面试时更容易展示 Prompt 工程意识
+- 后续可以做 Prompt 版本管理
 
-```text
-要求 LLM 基于项目基础信息、项目类型、GitHub/OpenDigger 核心指标、RAG 检索内容和规则版报告，生成结构化 JSON 格式的开源项目评估报告。
-```
+---
 
-### 17.2 Prompt 输入内容
+### 18.1 `app/prompts/llm_report_prompt.md`
 
-Prompt 中会填入：
+`llm_report_prompt.md` 给 LLM Report Agent 使用。
 
-| 占位符                | 内容                |
-| --------------------- | ------------------- |
-| `{basic_info}`        | GitHub 仓库基础信息 |
-| `{project_type}`      | 项目类型            |
-| `{selected_metrics}`  | 核心指标            |
-| `{retrieved_context}` | RAG 检索内容        |
-| `{rule_report}`       | 规则版报告          |
+它的主要作用是要求 LLM 基于项目基础信息、项目类型、GitHub/OpenDigger 核心指标、RAG 检索内容和规则版报告，生成结构化 JSON 格式的开源项目评估报告。
 
-### 17.3 Prompt 输出要求
+#### 输入内容
+
+Prompt 中会填入以下内容：
+
+| 占位符                | 内容                 |
+| --------------------- | -------------------- |
+| `{basic_info}`        | GitHub 仓库基础信息  |
+| `{project_type}`      | 项目类型             |
+| `{selected_metrics}`  | 核心评估指标         |
+| `{retrieved_context}` | RAG 检索到的指标解释 |
+| `{rule_report}`       | 规则版 baseline 报告 |
+
+#### 输出要求
 
 Prompt 要求 LLM：
 
@@ -1206,7 +1297,7 @@ Prompt 要求 LLM：
 - 每个维度分数必须在 0-20
 - `strengths`、`risks`、`suggestions` 必须具体且有指标依据
 
-### 17.4 目标输出结构
+#### 目标输出结构
 
 ```json
 {
@@ -1232,19 +1323,143 @@ Prompt 要求 LLM：
 }
 ```
 
-### 17.5 为什么把 Prompt 单独存放
+#### 设计原因
 
-Prompt 没有直接写死在 Python 代码里，而是放到独立 Markdown 文件中。
+系统没有让 LLM 从零生成报告，而是先生成规则版 baseline 报告，再让 LLM 基于真实指标和 RAG 内容进行增强。
 
-这样做的好处：
+这样做可以：
 
-- 代码更干净
-- Prompt 更容易修改
-- 不同 Agent 可以维护不同 Prompt
-- 面试时更容易展示 Prompt 工程意识
-- 后续可以做 Prompt 版本管理
+- 降低 LLM 幻觉风险
+- 保证报告有真实指标依据
+- 让 LLM 输出更稳定
+- 在 LLM 失败时保留规则版报告作为 fallback
+- 方便后续使用 Pydantic 校验结构化输出
 
-## 18. 知识库
+---
+
+### 18.2 `app/prompts/llm_quality_reviewer_prompt.md`
+
+`llm_quality_reviewer_prompt.md` 给 LLM Quality Reviewer 使用。
+
+它的主要作用是要求 LLM 对最终评估报告进行语义质量审查，判断报告是否有指标依据、是否误读指标、是否存在过度推断、风险和建议是否匹配。
+
+#### 输入内容
+
+Prompt 中会填入以下内容：
+
+| 占位符                  | 内容                            |
+| ----------------------- | ------------------------------- |
+| `{selected_metrics}`    | 系统筛选出的核心指标            |
+| `{retrieved_context}`   | RAG 检索到的指标解释            |
+| `{rule_quality_result}` | 规则版 Quality Guard 的检查结果 |
+| `{report}`              | 当前最终评估报告                |
+
+#### 检查重点
+
+LLM Quality Reviewer 会重点检查：
+
+- `strengths` 是否有指标支撑
+- `risks` 是否有指标支撑
+- `suggestions` 是否和 `risks` 对应
+- 是否正确解释 GitHub / OpenDigger 指标
+- 是否出现无依据结论
+- 是否存在前后矛盾
+- 是否把弱证据过度解释成强结论
+- 报告是否足够具体
+- 报告是否对开发者技术选型有实际参考价值
+
+#### 输出要求
+
+Prompt 要求 LLM：
+
+- 只返回 JSON
+- 不返回 Markdown
+- 不重写报告
+- 不调用外部工具
+- 不编造新事实
+- 只基于给定的 `report`、`selected_metrics`、`retrieved_context` 和 `rule_quality_result` 做判断
+
+#### 目标输出结构
+
+```json
+{
+  "passed": true,
+  "issues": [],
+  "suggestions": []
+}
+```
+
+#### 可以发现的问题示例
+
+LLM Quality Reviewer 可以发现规则版 Quality Guard 难以发现的语义问题。
+
+例如：
+
+```text
+报告把 quantile_4 的 15 days response time 直接解释成 fast response，这是过度推断。
+```
+
+或者：
+
+```text
+报告把较高的 bus_factor 解释成高风险，但实际上较高 bus_factor 通常表示对单个维护者的依赖风险较低。
+```
+
+再例如：
+
+```text
+报告给出的建议没有和具体风险或指标证据对应，导致建议不够有依据。
+```
+
+#### 设计原因
+
+规则版 `quality_guard.py` 主要检查结构完整性，例如：
+
+```text
+字段是否完整
+分数是否越界
+data_sources 是否存在
+selected_metrics 是否为空
+```
+
+但它无法判断报告是否存在语义问题。
+
+`llm_quality_reviewer_prompt.md` 用于让 LLM 做语义级质量审查，补充检查：
+
+```text
+报告是否真正有依据
+指标是否被正确解释
+风险和建议是否匹配
+结论是否前后一致
+是否存在过度推断
+```
+
+这让系统的质量控制从“格式检查”升级为“语义审查”。
+
+---
+
+### 18.3 Prompt 设计总结
+
+当前系统中的两个 Prompt 分工如下：
+
+| Prompt 文件                      | 使用节点             | 作用                                      |
+| -------------------------------- | -------------------- | ----------------------------------------- |
+| `llm_report_prompt.md`           | LLM Report Agent     | 基于真实指标和 RAG 内容生成结构化评估报告 |
+| `llm_quality_reviewer_prompt.md` | LLM Quality Reviewer | 对最终报告进行语义质量审查                |
+
+整体设计思路是：
+
+```text
+LLM Report Agent
+→ 负责生成报告
+
+LLM Quality Reviewer
+→ 负责审查报告
+```
+
+这种设计把“生成”和“审查”拆开，有助于降低 LLM 输出风险，也更接近真实 AI 应用中的 LLM-as-a-Judge 设计。
+
+## 19. 知识库
 
 知识库位于：
 
@@ -1258,7 +1473,7 @@ knowledge_base/
 knowledge_base/metrics.md
 ```
 
-### 18.1 `knowledge_base/metrics.md`
+### 19.1 `knowledge_base/metrics.md`
 
 `metrics.md` 是当前轻量 RAG 使用的本地知识库。
 
@@ -1277,7 +1492,7 @@ knowledge_base/metrics.md
 - Forks
 - License
 
-### 18.2 知识库的作用
+### 19.2 知识库的作用
 
 知识库用于帮助 LLM 理解指标含义。
 
@@ -1293,7 +1508,7 @@ knowledge_base/metrics.md
 | Change Request Response Time | 判断 PR review 效率和贡献者体验 |
 | License                      | 判断项目是否适合安全采用        |
 
-### 18.3 当前轻量 RAG 流程
+### 19.3 当前轻量 RAG 流程
 
 ```text
 selected_metrics
@@ -1304,7 +1519,7 @@ selected_metrics
 → LLM Report Agent 使用 retrieved_context
 ```
 
-### 18.4 当前轻量 RAG 的优点
+### 19.4 当前轻量 RAG 的优点
 
 - 简单稳定
 - 易于调试
@@ -1312,7 +1527,7 @@ selected_metrics
 - 适合 MVP 阶段
 - 可以先跑通 RAG 到 LLM 的完整链路
 
-### 18.5 当前轻量 RAG 的局限
+### 19.5 当前轻量 RAG 的局限
 
 - 只能按指标名匹配
 - 不支持语义检索
@@ -1321,7 +1536,7 @@ selected_metrics
 - 不支持更细粒度 chunk 召回
 - 知识库来源还不够丰富
 
-### 18.6 后续完全版 RAG 计划
+### 19.6 后续完全版 RAG 计划
 
 后续计划升级为：
 
@@ -1343,7 +1558,7 @@ selected_metrics
 - 更清晰的来源追踪
 - 更强的指标解释能力
 
-## 19. 模块协作关系
+## 20. 模块协作关系
 
 一次完整评估中，各模块协作关系如下：
 
@@ -1384,7 +1599,7 @@ app/main.py
 返回 JSON 结果
 ```
 
-### 19.1 数据流转
+### 20.1 数据流转
 
 核心数据通过 `EvaluationState` 传递。
 
@@ -1401,7 +1616,7 @@ input_url
 → API response
 ```
 
-### 19.2 存储流转
+### 20.2 存储流转
 
 Redis 主要参与三类存储：
 
@@ -1411,7 +1626,7 @@ GitHub / OpenDigger 指标缓存
 任务状态
 ```
 
-### 19.3 LLM 调用位置
+### 20.3 LLM 调用位置
 
 当前系统只有一个节点真正调用 LLM：
 
@@ -1421,9 +1636,9 @@ app/agents/ai_agents/llm_report_generator.py
 
 其余节点主要依赖代码规则和外部工具，保证流程稳定。
 
-## 20. 设计原则总结
+## 21. 设计原则总结
 
-### 20.1 规则优先，LLM 增强
+### 21.1 规则优先，LLM 增强
 
 系统尽量让确定性任务由规则和工具完成。
 
@@ -1444,7 +1659,7 @@ LLM 主要用于：
 
 这样可以降低幻觉风险。
 
-### 20.2 先 baseline，再 LLM
+### 21.2 先 baseline，再 LLM
 
 系统先生成规则版 baseline 报告，再让 LLM 进行增强。
 
@@ -1455,7 +1670,7 @@ LLM 主要用于：
 - LLM 失败时有 fallback
 - 方便 Quality Guard 检查
 
-### 20.3 外部服务失败不影响主流程
+### 21.3 外部服务失败不影响主流程
 
 Redis 是增强组件，不是主流程强依赖。
 
@@ -1476,7 +1691,7 @@ LLM 失败时：
 继续返回可用结果
 ```
 
-### 20.4 状态统一
+### 21.4 状态统一
 
 所有节点通过 `EvaluationState` 传递状态。
 
@@ -1488,7 +1703,7 @@ LLM 失败时：
 - 易于保存任务状态
 - 易于 API 返回结构化结果
 
-### 20.5 模块职责单一
+### 21.5 模块职责单一
 
 每个模块只做一类事情：
 
