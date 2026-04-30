@@ -546,10 +546,27 @@ docs/performance.md
 
 待完善：
 
-- 完全版 RAG
-- 更强的 LLM Quality Reviewer
-- 更丰富的知识库来源
-- 项目文档细化
+—— 项目功能补全 ——
+
+- [ ] 完全版 RAG：实现多文档知识库、文档切分、本地索引和相关内容检索
+- [ ] Prompt 迭代说明：整理 LLM Report Prompt 从初版到最终版的优化过程
+- [ ] 文档补全：完善 architecture、modules、api、error_handling、performance 文档
+
+—— 项目功能增强 ——
+
+- [ ] LLM Quality Reviewer：用 LLM 检查报告是否空泛、是否误读指标、是否缺少依据
+- [ ] 风险诊断 risk_diagnosis：为每个风险补充证据、原因和建议
+- [ ] 历史报告版本管理：保存同一仓库的多次评估结果，支持趋势分析
+- [ ] 多轮追问：支持基于历史报告和指标上下文继续提问
+- [ ] SSE 流式输出：实时展示任务进度
+- [ ] 多仓库对比：支持多个开源项目横向比较
+- [ ] 自动沉淀报告到知识库：将历史评估经验沉淀为后续 RAG 可用知识
+
+—— 设计模式增强 ——
+
+- [ ] ReAct 思想增强 RAG Retrieval：让检索过程支持“检索 → 观察 → 补充检索”的迭代流程
+- [ ] ReAct 思想增强 LLM Quality Reviewer：让质量检查基于“检查报告 → 对照指标 → 判断是否有依据”
+- [ ] 轻量 Plan-and-Executor：将 Supervisor 明确拆分为计划层和执行节点，用于多仓库对比或多轮追问
 
 ---
 
