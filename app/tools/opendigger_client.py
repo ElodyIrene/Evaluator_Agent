@@ -3,9 +3,12 @@
 import httpx
 
 from app.schemas import MetricBundle
+from app.tools.redis_store import load_json, save_json
 
 
 OPENDIGGER_BASE_URL = "https://oss.open-digger.cn/github"
+
+OPENDIGGER_CACHE_TTL_SECONDS = 60 * 60 * 6
 
 
 DEFAULT_METRICS = [
@@ -27,14 +30,52 @@ DEFAULT_METRICS = [
 ]
 
 
+def _opendigger_metric_cache_key(owner: str, repo: str, metric_name: str) -> str:
+    return f"cache:opendigger:{owner}:{repo}:{metric_name}"
+
+
+def _load_opendigger_metric_from_cache(
+    owner: str,
+    repo: str,
+    metric_name: str,
+) -> Any | None:
+    try:
+        return load_json(_opendigger_metric_cache_key(owner, repo, metric_name))
+    except Exception:
+        return None
+
+
+def _save_opendigger_metric_to_cache(
+    owner: str,
+    repo: str,
+    metric_name: str,
+    value: Any,
+) -> None:
+    try:
+        save_json(
+            key=_opendigger_metric_cache_key(owner, repo, metric_name),
+            value=value,
+            expire_seconds=OPENDIGGER_CACHE_TTL_SECONDS,
+        )
+    except Exception:
+        return
+
+
 def get_opendigger_metric(owner: str, repo: str, metric_name: str) -> Any | None:
-    """Fetch one OpenDigger metric."""
+    """Fetch one OpenDigger metric, with Redis cache."""
+    cached_value = _load_opendigger_metric_from_cache(owner, repo, metric_name)
+
+    if cached_value is not None:
+        return cached_value
+
     url = f"{OPENDIGGER_BASE_URL}/{owner}/{repo}/{metric_name}.json"
 
     try:
         response = httpx.get(url, timeout=20)
         response.raise_for_status()
-        return response.json()
+        value = response.json()
+        _save_opendigger_metric_to_cache(owner, repo, metric_name, value)
+        return value
     except httpx.HTTPError:
         return None
 
@@ -70,10 +111,12 @@ if __name__ == "__main__":
     repo = "langgraph"
 
     bundle = get_opendigger_metric_bundle(owner, repo)
+    cached_openrank = _load_opendigger_metric_from_cache(owner, repo, "openrank")
 
     print("repo:", f"{owner}/{repo}")
     print("available metrics:", list(bundle.opendigger.keys()))
     print("missing metrics:", bundle.missing_metrics)
+    print("opendigger cache exists:", cached_openrank is not None)
 
     for name, value in bundle.opendigger.items():
         print(name, "type:", type(value).__name__)

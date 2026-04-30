@@ -8,6 +8,7 @@ from app.config import settings
 
 
 REPORT_HISTORY_KEY = "report_history"
+TASK_STATE_TTL_SECONDS = 60 * 60 * 24
 
 
 def get_redis_client() -> redis.Redis:
@@ -104,6 +105,35 @@ def list_recent_reports(limit: int = 10) -> list[dict[str, Any]]:
     return reports
 
 
+def _task_state_key(task_id: str) -> str:
+    """Build Redis key for task state."""
+    return f"task_state:{task_id}"
+
+
+def save_task_state(
+    task_id: str,
+    state: dict[str, Any],
+    expire_seconds: int = TASK_STATE_TTL_SECONDS,
+) -> None:
+    """Save workflow task state."""
+    value = {
+        "task_id": task_id,
+        "saved_at": datetime.now(UTC).isoformat(),
+        "state": state,
+    }
+
+    save_json(
+        key=_task_state_key(task_id),
+        value=value,
+        expire_seconds=expire_seconds,
+    )
+
+
+def load_task_state(task_id: str) -> dict[str, Any] | None:
+    """Load workflow task state."""
+    return load_json(_task_state_key(task_id))
+
+
 if __name__ == "__main__":
     print("redis ping:", ping_redis())
 
@@ -126,6 +156,20 @@ if __name__ == "__main__":
 
     recent_reports = list_recent_reports(limit=3)
 
+    sample_state = {
+        "input_url": "https://github.com/test-owner/test-repo",
+        "step": "quality_guard",
+        "status": "completed",
+    }
+
+    save_task_state(
+        task_id="test-task",
+        state=sample_state,
+    )
+
+    loaded_state = load_task_state("test-task")
+
     print("loaded report:", loaded_report)
     print("recent report count:", len(recent_reports))
     print("latest recent repo:", recent_reports[0]["report"]["repo"] if recent_reports else None)
+    print("loaded task state:", loaded_state)

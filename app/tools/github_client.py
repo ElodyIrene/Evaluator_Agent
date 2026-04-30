@@ -6,11 +6,14 @@ import httpx
 
 from app.config import settings
 from app.schemas import ProjectBasicInfo, RepoInput
+from app.tools.redis_store import load_json, save_json
 
 
 GITHUB_URL_PATTERN = re.compile(
     r"^https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?/?$"
 )
+
+GITHUB_CACHE_TTL_SECONDS = 60 * 60
 
 
 def parse_github_url(url: str) -> RepoInput:
@@ -46,6 +49,33 @@ def _get_json(url: str) -> dict[str, Any]:
     return response.json()
 
 
+def _github_basic_info_cache_key(owner: str, repo: str) -> str:
+    return f"cache:github:basic_info:{owner}:{repo}"
+
+
+def _load_project_basic_info_from_cache(owner: str, repo: str) -> ProjectBasicInfo | None:
+    try:
+        cached_data = load_json(_github_basic_info_cache_key(owner, repo))
+    except Exception:
+        return None
+
+    if cached_data is None:
+        return None
+
+    return ProjectBasicInfo.model_validate(cached_data)
+
+
+def _save_project_basic_info_to_cache(info: ProjectBasicInfo) -> None:
+    try:
+        save_json(
+            key=_github_basic_info_cache_key(info.owner, info.repo),
+            value=info.model_dump(mode="json"),
+            expire_seconds=GITHUB_CACHE_TTL_SECONDS,
+        )
+    except Exception:
+        return
+
+
 def get_readme(owner: str, repo: str) -> str | None:
     """Fetch README content from GitHub."""
     url = f"https://api.github.com/repos/{owner}/{repo}/readme"
@@ -65,13 +95,18 @@ def get_readme(owner: str, repo: str) -> str | None:
 
 
 def get_project_basic_info(owner: str, repo: str) -> ProjectBasicInfo:
-    """Fetch basic repository information from GitHub."""
+    """Fetch basic repository information from GitHub, with Redis cache."""
+    cached_info = _load_project_basic_info_from_cache(owner, repo)
+
+    if cached_info is not None:
+        return cached_info
+
     url = f"https://api.github.com/repos/{owner}/{repo}"
     data = _get_json(url)
 
     license_data = data.get("license") or {}
 
-    return ProjectBasicInfo(
+    info = ProjectBasicInfo(
         owner=owner,
         repo=repo,
         name=data.get("name", repo),
@@ -85,11 +120,17 @@ def get_project_basic_info(owner: str, repo: str) -> ProjectBasicInfo:
         readme=get_readme(owner, repo),
     )
 
+    _save_project_basic_info_to_cache(info)
+
+    return info
+
 
 if __name__ == "__main__":
     example_url = "https://github.com/langchain-ai/langgraph"
     repo_input = parse_github_url(example_url)
     info = get_project_basic_info(repo_input.owner, repo_input.repo)
+
+    cached_info = _load_project_basic_info_from_cache(repo_input.owner, repo_input.repo)
 
     print("owner:", info.owner)
     print("repo:", info.repo)
@@ -100,3 +141,4 @@ if __name__ == "__main__":
     print("license:", info.license)
     print("topics:", info.topics[:5])
     print("readme exists:", bool(info.readme))
+    print("github cache exists:", cached_info is not None)
