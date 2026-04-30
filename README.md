@@ -549,8 +549,7 @@ docs/performance.md
 —— 项目功能补全 ——
 
 - [ ] 完全版 RAG：实现多文档知识库、文档切分、本地索引和相关内容检索
-- [ ] Prompt 迭代说明：整理 LLM Report Prompt 从初版到最终版的优化过程
-- [ ] 文档补全：完善 architecture、modules、api、error_handling、performance 文档
+- [x] 文档补全：完善 architecture、modules、api、error_handling、performance 文档
 
 —— 项目功能增强 ——
 
