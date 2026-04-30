@@ -16,6 +16,14 @@ GITHUB_URL_PATTERN = re.compile(
 GITHUB_CACHE_TTL_SECONDS = 60 * 60
 
 
+class GitHubRepoNotFoundError(Exception):
+    """Raised when the GitHub repository does not exist or is not accessible."""
+
+
+class GitHubAPIError(Exception):
+    """Raised when GitHub API request fails."""
+
+
 def parse_github_url(url: str) -> RepoInput:
     """Parse a GitHub repository URL into owner and repo."""
     match = GITHUB_URL_PATTERN.match(url.strip())
@@ -82,7 +90,7 @@ def get_readme(owner: str, repo: str) -> str | None:
 
     try:
         data = _get_json(url)
-    except httpx.HTTPStatusError:
+    except httpx.HTTPError:
         return None
 
     content = data.get("content")
@@ -102,7 +110,24 @@ def get_project_basic_info(owner: str, repo: str) -> ProjectBasicInfo:
         return cached_info
 
     url = f"https://api.github.com/repos/{owner}/{repo}"
-    data = _get_json(url)
+
+    try:
+        data = _get_json(url)
+    except httpx.HTTPStatusError as error:
+        status_code = error.response.status_code
+
+        if status_code == 404:
+            raise GitHubRepoNotFoundError(
+                f"GitHub repository not found or not accessible: {owner}/{repo}"
+            ) from error
+
+        raise GitHubAPIError(
+            f"GitHub API request failed with status {status_code}: {owner}/{repo}"
+        ) from error
+    except httpx.HTTPError as error:
+        raise GitHubAPIError(
+            f"GitHub API request failed: {owner}/{repo}. Error: {error}"
+        ) from error
 
     license_data = data.get("license") or {}
 

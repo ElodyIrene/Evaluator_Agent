@@ -12,10 +12,17 @@ TASK_STATE_TTL_SECONDS = 60 * 60 * 24
 
 
 def get_redis_client() -> redis.Redis:
-    """Create a Redis client."""
+    """Create a Redis client with short timeout.
+
+    Redis is optional for the main evaluation flow.
+    If Redis is unavailable, it should fail fast instead of blocking the API.
+    """
     return redis.Redis.from_url(
         settings.redis_url,
         decode_responses=True,
+        socket_connect_timeout=0.5,
+        socket_timeout=0.5,
+        retry_on_timeout=False,
     )
 
 
@@ -57,7 +64,6 @@ def delete_key(key: str) -> None:
 
 
 def _report_key(owner: str, repo: str) -> str:
-    """Build Redis key for a repository report."""
     return f"report:{owner}:{repo}"
 
 
@@ -106,7 +112,6 @@ def list_recent_reports(limit: int = 10) -> list[dict[str, Any]]:
 
 
 def _task_state_key(task_id: str) -> str:
-    """Build Redis key for task state."""
     return f"task_state:{task_id}"
 
 
@@ -136,40 +141,3 @@ def load_task_state(task_id: str) -> dict[str, Any] | None:
 
 if __name__ == "__main__":
     print("redis ping:", ping_redis())
-
-    sample_report = {
-        "repo": "test-owner/test-repo",
-        "overall_score": 88,
-        "summary": "This is a test report.",
-    }
-
-    save_report(
-        owner="test-owner",
-        repo="test-repo",
-        report=sample_report,
-    )
-
-    loaded_report = load_report(
-        owner="test-owner",
-        repo="test-repo",
-    )
-
-    recent_reports = list_recent_reports(limit=3)
-
-    sample_state = {
-        "input_url": "https://github.com/test-owner/test-repo",
-        "step": "quality_guard",
-        "status": "completed",
-    }
-
-    save_task_state(
-        task_id="test-task",
-        state=sample_state,
-    )
-
-    loaded_state = load_task_state("test-task")
-
-    print("loaded report:", loaded_report)
-    print("recent report count:", len(recent_reports))
-    print("latest recent repo:", recent_reports[0]["report"]["repo"] if recent_reports else None)
-    print("loaded task state:", loaded_state)

@@ -1,4 +1,5 @@
-﻿from typing import Any
+﻿from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any
 
 import httpx
 
@@ -9,6 +10,8 @@ from app.tools.redis_store import load_json, save_json
 OPENDIGGER_BASE_URL = "https://oss.open-digger.cn/github"
 
 OPENDIGGER_CACHE_TTL_SECONDS = 60 * 60 * 6
+OPENDIGGER_REQUEST_TIMEOUT_SECONDS = 8
+OPENDIGGER_MAX_WORKERS = 8
 
 
 DEFAULT_METRICS = [
@@ -71,7 +74,7 @@ def get_opendigger_metric(owner: str, repo: str, metric_name: str) -> Any | None
     url = f"{OPENDIGGER_BASE_URL}/{owner}/{repo}/{metric_name}.json"
 
     try:
-        response = httpx.get(url, timeout=20)
+        response = httpx.get(url, timeout=OPENDIGGER_REQUEST_TIMEOUT_SECONDS)
         response.raise_for_status()
         value = response.json()
         _save_opendigger_metric_to_cache(owner, repo, metric_name, value)
@@ -85,19 +88,30 @@ def get_opendigger_metric_bundle(
     repo: str,
     metric_names: list[str] | None = None,
 ) -> MetricBundle:
-    """Fetch a group of OpenDigger metrics."""
+    """Fetch a group of OpenDigger metrics concurrently."""
     metric_names = metric_names or DEFAULT_METRICS
 
     opendigger_data: dict[str, Any] = {}
     missing_metrics: list[str] = []
 
-    for metric_name in metric_names:
-        value = get_opendigger_metric(owner, repo, metric_name)
+    with ThreadPoolExecutor(max_workers=OPENDIGGER_MAX_WORKERS) as executor:
+        future_to_metric = {
+            executor.submit(get_opendigger_metric, owner, repo, metric_name): metric_name
+            for metric_name in metric_names
+        }
 
-        if value is None:
-            missing_metrics.append(metric_name)
-        else:
-            opendigger_data[metric_name] = value
+        for future in as_completed(future_to_metric):
+            metric_name = future_to_metric[future]
+
+            try:
+                value = future.result()
+            except Exception:
+                value = None
+
+            if value is None:
+                missing_metrics.append(metric_name)
+            else:
+                opendigger_data[metric_name] = value
 
     return MetricBundle(
         github={},
@@ -116,7 +130,5 @@ if __name__ == "__main__":
     print("repo:", f"{owner}/{repo}")
     print("available metrics:", list(bundle.opendigger.keys()))
     print("missing metrics:", bundle.missing_metrics)
+    print("opendigger metric count:", len(bundle.opendigger))
     print("opendigger cache exists:", cached_openrank is not None)
-
-    for name, value in bundle.opendigger.items():
-        print(name, "type:", type(value).__name__)

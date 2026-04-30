@@ -144,7 +144,7 @@ def llm_report_generator_agent(state: EvaluationState) -> EvaluationState:
         state.report = EvaluationReport.model_validate(data)
 
     except Exception as error:
-        state.errors.append(f"LLM report generation failed: {error}")
+        state.errors.append(f"LLM report generation failed: {error}. Using rule-based report fallback.")
 
     return state
 

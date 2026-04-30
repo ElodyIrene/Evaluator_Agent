@@ -105,5 +105,57 @@
 
 ### 异常处理
 
+#### 1. 传入非法地址
 
+app/main.py
+
+```
+{
+  "status": "failed",
+  "error_type": "invalid_github_url",
+  "message": "Invalid GitHub repository URL. Example: XXX"
+}
+```
+
+#### 2. GitHub 仓库不存在
+
+app/tools/github_client.py
+
+```
+{
+  "status": "failed",
+  "error_type": "github_repo_not_found",
+  "message": "GitHub repository not found or not accessible"
+}
+```
+
+#### 3. LLM 生成报告失败
+
+**返回规则版报告**
+
+app/agents/ai_agents/llm_report_generator.py
+
+```
+errors: ['LLM report generation failed: Unsupported LLM provider: XXX. Using rule-based report fallback.']
+```
+
+#### 4. Redis 不可用
+
+主评估流程不崩溃，只有保存缓存、历史报告、任务状态的功能不可用
+
+```
+errors: ['Failed to save report history: Error 10061 connecting to localhost:6379.']
+```
+
+### 遇到的问题
+
+#### 1. 禁用Redis后评估流程响应时间较长
+
+- **3 次平均响应时长 218.82 秒 → 并行优化后耗时 85.50 秒 → 短超时优化后耗时 41.42 秒，减少了约 81% 时间**
+- Redis 正常 + 缓存可用：约 17.1 秒 (主要是 LLM 生成报告的耗时)
+- **原因**：Redis 停止后缓存失效，OpenDigger 15 个指标变成串行网络请求；每次缓存读取/写入都要先等待失败
+- **解决方案**：OpenDigger 指标从串行请求变为并发请求 + 通过短超时给 Redis 设置快速失败机制
+- 增加多次评估同一仓库可选择复用之前的 LLM 报告机制，Redis 命中后耗时大约 0.03秒
+
+#### 2. 
 

@@ -5,6 +5,11 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from app.graph import run_evaluation_graph
+from app.tools.github_client import (
+    GitHubAPIError,
+    GitHubRepoNotFoundError,
+    parse_github_url,
+)
 from app.tools.redis_store import (
     list_recent_reports,
     load_report,
@@ -23,6 +28,17 @@ app = FastAPI(
 
 class EvaluateRequest(BaseModel):
     url: str
+    use_cached_report: bool = False
+
+
+def _safe_save_task_state(task_id: str, state: dict[str, Any]) -> None:
+    try:
+        save_task_state(
+            task_id=task_id,
+            state=state,
+        )
+    except Exception:
+        return
 
 
 @app.get("/health")
@@ -34,7 +50,61 @@ def health_check() -> dict[str, str]:
 def evaluate_project(request: EvaluateRequest) -> dict[str, Any]:
     task_id = str(uuid4())
 
-    save_task_state(
+    try:
+        repo_input = parse_github_url(request.url)
+    except ValueError as error:
+        _safe_save_task_state(
+            task_id=task_id,
+            state={
+                "input_url": request.url,
+                "step": "input_validation",
+                "status": "failed",
+                "error_type": "invalid_github_url",
+                "error": str(error),
+            },
+        )
+
+        return {
+            "task_id": task_id,
+            "status": "failed",
+            "error_type": "invalid_github_url",
+            "message": str(error),
+        }
+
+    if request.use_cached_report:
+        try:
+            cached_report = load_report(
+                owner=repo_input.owner,
+                repo=repo_input.repo,
+            )
+
+            if cached_report is not None:
+                _safe_save_task_state(
+                    task_id=task_id,
+                    state={
+                        "input_url": request.url,
+                        "owner": repo_input.owner,
+                        "repo": repo_input.repo,
+                        "step": "cache_lookup",
+                        "status": "completed",
+                        "cache_hit": True,
+                    },
+                )
+
+                return {
+                    "task_id": task_id,
+                    "status": "completed",
+                    "cache_hit": True,
+                    "owner": repo_input.owner,
+                    "repo": repo_input.repo,
+                    "report": cached_report,
+                    "errors": [],
+                }
+
+        except Exception:
+            pass
+
+    _safe_save_task_state(
         task_id=task_id,
         state={
             "input_url": request.url,
@@ -45,13 +115,15 @@ def evaluate_project(request: EvaluateRequest) -> dict[str, Any]:
 
     try:
         final_state = run_evaluation_graph(request.url)
-    except Exception as error:
-        save_task_state(
+
+    except GitHubRepoNotFoundError as error:
+        _safe_save_task_state(
             task_id=task_id,
             state={
                 "input_url": request.url,
-                "step": "evaluation",
+                "step": "project_parser",
                 "status": "failed",
+                "error_type": "github_repo_not_found",
                 "error": str(error),
             },
         )
@@ -59,7 +131,46 @@ def evaluate_project(request: EvaluateRequest) -> dict[str, Any]:
         return {
             "task_id": task_id,
             "status": "failed",
-            "error": str(error),
+            "error_type": "github_repo_not_found",
+            "message": str(error),
+        }
+
+    except GitHubAPIError as error:
+        _safe_save_task_state(
+            task_id=task_id,
+            state={
+                "input_url": request.url,
+                "step": "github_api",
+                "status": "failed",
+                "error_type": "github_api_error",
+                "error": str(error),
+            },
+        )
+
+        return {
+            "task_id": task_id,
+            "status": "failed",
+            "error_type": "github_api_error",
+            "message": str(error),
+        }
+
+    except Exception as error:
+        _safe_save_task_state(
+            task_id=task_id,
+            state={
+                "input_url": request.url,
+                "step": "evaluation",
+                "status": "failed",
+                "error_type": "evaluation_failed",
+                "error": str(error),
+            },
+        )
+
+        return {
+            "task_id": task_id,
+            "status": "failed",
+            "error_type": "evaluation_failed",
+            "message": str(error),
         }
 
     history_saved = False
@@ -75,7 +186,7 @@ def evaluate_project(request: EvaluateRequest) -> dict[str, Any]:
         except Exception as error:
             final_state.errors.append(f"Failed to save report history: {error}")
 
-    save_task_state(
+    _safe_save_task_state(
         task_id=task_id,
         state={
             "input_url": request.url,
@@ -84,6 +195,7 @@ def evaluate_project(request: EvaluateRequest) -> dict[str, Any]:
             "project_type": final_state.project_type,
             "step": "completed",
             "status": "completed",
+            "cache_hit": False,
             "overall_score": final_state.report.overall_score if final_state.report else None,
             "quality_passed": final_state.quality_result.passed if final_state.quality_result else None,
             "history_saved": history_saved,
@@ -94,6 +206,7 @@ def evaluate_project(request: EvaluateRequest) -> dict[str, Any]:
     return {
         "task_id": task_id,
         "status": "completed",
+        "cache_hit": False,
         "owner": final_state.owner,
         "repo": final_state.repo,
         "project_type": final_state.project_type,
