@@ -41,6 +41,31 @@ def _safe_save_task_state(task_id: str, state: dict[str, Any]) -> None:
         return
 
 
+def _format_report_fields(report: dict[str, Any] | None) -> dict[str, Any]:
+    if report is None:
+        return {
+            "project_type": None,
+            "overall_score": None,
+            "dimension_scores": {},
+            "summary": None,
+            "strengths": [],
+            "risks": [],
+            "suggestions": [],
+            "data_sources": [],
+        }
+
+    return {
+        "project_type": report.get("project_type"),
+        "overall_score": report.get("overall_score"),
+        "dimension_scores": report.get("dimension_scores", {}),
+        "summary": report.get("summary"),
+        "strengths": report.get("strengths", []),
+        "risks": report.get("risks", []),
+        "suggestions": report.get("suggestions", []),
+        "data_sources": report.get("data_sources", []),
+    }
+
+
 @app.get("/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
@@ -79,6 +104,9 @@ def evaluate_project(request: EvaluateRequest) -> dict[str, Any]:
             )
 
             if cached_report is not None:
+                report_data = cached_report.get("report", {})
+                report_fields = _format_report_fields(report_data)
+
                 _safe_save_task_state(
                     task_id=task_id,
                     state={
@@ -97,7 +125,20 @@ def evaluate_project(request: EvaluateRequest) -> dict[str, Any]:
                     "cache_hit": True,
                     "owner": repo_input.owner,
                     "repo": repo_input.repo,
-                    "report": cached_report,
+                    "project_type": report_fields["project_type"],
+                    "overall_score": report_fields["overall_score"],
+                    "dimension_scores": report_fields["dimension_scores"],
+                    "summary": report_fields["summary"],
+                    "strengths": report_fields["strengths"],
+                    "risks": report_fields["risks"],
+                    "suggestions": report_fields["suggestions"],
+                    "data_sources": report_fields["data_sources"],
+                    "selected_metrics": [],
+                    "retrieved_context_count": 0,
+                    "retry_count": None,
+                    "quality_result": None,
+                    "history_saved": False,
+                    "cached_saved_at": cached_report.get("saved_at"),
                     "errors": [],
                 }
 
@@ -203,19 +244,29 @@ def evaluate_project(request: EvaluateRequest) -> dict[str, Any]:
         },
     )
 
+    report_data = final_state.report.model_dump(mode="json") if final_state.report else None
+    report_fields = _format_report_fields(report_data)
+
     return {
         "task_id": task_id,
         "status": "completed",
         "cache_hit": False,
         "owner": final_state.owner,
         "repo": final_state.repo,
-        "project_type": final_state.project_type,
+        "project_type": report_fields["project_type"] or final_state.project_type,
+        "overall_score": report_fields["overall_score"],
+        "dimension_scores": report_fields["dimension_scores"],
+        "summary": report_fields["summary"],
+        "strengths": report_fields["strengths"],
+        "risks": report_fields["risks"],
+        "suggestions": report_fields["suggestions"],
+        "data_sources": report_fields["data_sources"],
         "selected_metrics": [
             metric.model_dump(mode="json")
             for metric in final_state.selected_metrics
         ],
         "retrieved_context_count": len(final_state.retrieved_context),
-        "report": final_state.report.model_dump(mode="json") if final_state.report else None,
+        "retry_count": final_state.retry_count,
         "quality_result": final_state.quality_result.model_dump(mode="json") if final_state.quality_result else None,
         "history_saved": history_saved,
         "errors": final_state.errors,

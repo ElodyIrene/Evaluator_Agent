@@ -1,165 +1,689 @@
 # 智能开源项目评估 Agent 系统
 
-### 项目介绍
+一个基于 **LangGraph + FastAPI + RAG + LLM + Redis** 的后端 AI 应用项目。
 
-智能开源项目评估 Agent 系统通过 AI Agent 解决开发者在技术选型、项目调研、开源项目质量判断中的真实痛点，整合 **项目解析、指标采集、RAG 知识检索、LLM-as-a-Judge 评估** 四大核心能力，实现对 GitHub 开源项目的自动化分析、核心指标推荐和结构化评估报告生成。系统能够降低人工调研成本，提升开源项目评估效率。
+用户输入 GitHub 仓库链接后，系统会自动解析项目基础信息，采集 GitHub 与 OpenDigger 指标，根据项目类型筛选核心指标，结合本地知识库和 LLM 生成结构化开源项目评估报告，并通过 Quality Guard 对报告进行质量检查。
 
-### 框架图
+本项目定位为 AI 应用岗面试展示项目，重点体现：
 
-![workflow](.\pictures\workflow.jpg)
+- LangGraph 工作流编排
+- GitHub / OpenDigger 外部 API 工具调用
+- RAG 指标解释
+- LLM 结构化报告生成
+- Quality Guard 质量控制
+- Redis 缓存、历史报告和任务状态管理
+- 异常处理与降级兜底
+- FastAPI 后端服务化
 
-一个基于 LangGraph 的 multi-Agent 工作流系统。用户输入 GitHub 仓库地址后，Supervisor Agent 负责调度各个任务节点。首先 Project Parser Agent 提取项目基础信息，然后 Project Type Classifier Agent 判断项目属于哪类开源项目。接着 Metric Collector Agent 调用 GitHub API 和 OpenDigger API 获取指标数据。Core Metric Selector Agent 根据项目类型筛选关键指标。随后 RAG Retrieval Agent 从知识库中检索这些指标的定义和适用场景。最后 Evaluation Judge Agent 结合指标结果和定义生成评估报告，并由 Quality Guard Agent 做一致性检查。整个过程中的状态、缓存和历史报告信息都统一保存在 Redis 中。
+---
 
-### 工具层
+## 1. 项目背景
 
-#### 1. app/tools/github_client.py
+开发者在进行技术选型、项目调研或开源项目质量判断时，通常会参考 GitHub stars、forks、README 等信息。
 
-提供仓库信息获取能力
+但这些表层指标并不能完整反映一个开源项目的真实健康度。
 
-先查 Redis
+例如：
 
-- 如果有缓存 → 直接使用缓存
+- stars 高，不代表项目维护良好
+- forks 多，不代表贡献活跃
+- README 存在，不代表文档完整
+- issue 多，可能代表社区活跃，也可能代表维护压力大
+- 项目活跃，不代表社区结构健康
 
-- 如果没有缓存 → 解析 GitHub 链接，获取真实的仓库信息
+因此，本项目希望构建一个自动化开源项目评估系统，结合 GitHub API、OpenDigger 指标、RAG 知识解释和 LLM 报告生成，对开源项目进行更全面、更可解释的结构化评估。
 
+---
 
-#### 2. app/tools/opendigger_client.py
+## 2. 项目目标
 
-提供开源指标结果获取能力
+系统目标是：
 
-先查 Redis
+```text
+输入 GitHub 仓库链接
+→ 自动采集项目信息和开源健康度指标
+→ 根据项目类型筛选关键指标
+→ 检索指标定义和适用场景
+→ 生成结构化评估报告
+→ 进行质量检查
+→ 返回可用于技术选型的项目评估结果
+```
 
-- 如果有缓存 → 直接使用缓存
+示例输入：
 
-- 如果没有缓存 → 获取 OpenDigger 的开源指标
+```json
+{
+  "url": "https://github.com/langchain-ai/langgraph",
+  "use_cached_report": false
+}
+```
 
+系统输出内容包括：
 
-#### 3. app/tools/redis_store.py
+- 项目类型
+- 总评分
+- 五个维度评分
+- 项目优势
+- 项目风险
+- 改进建议
+- 核心指标
+- 数据来源
+- 质量检查结果
+- 任务状态
+- 历史报告缓存状态
 
-提供 Redis 存储工具，用于保存和读取 JSON 数据。
+---
 
-支持：
-- 缓存 GitHub / OpenDigger 指标结果，减少重复 API 请求。
-- 保存和查询历史评估报告。
-- 根据 task_id 保存和查询每次评估任务的执行状态，包括任务状态、当前步骤、评分结果、质量检查结果和错误信息。
+## 3. 系统架构
 
-### 规则型Agent层 —— 依赖代码进行稳定的逻辑处理
+![workflow](pictures/workflow.jpg)
 
-#### 1. app/agents/project_parser.py
+系统主流程：
 
-输入 GitHub URL → 解析 owner/repo → 调用 GitHub Client 获取基础信息 → 把结果写入 state.owner、state.repo、state.basic_info
+```text
+输入 GitHub 仓库链接
+→ Supervisor / LangGraph 调度
+→ Project Parser
+→ Type Classifier
+→ Metric Collector
+→ Core Metric Selector
+→ RAG Retrieval
+→ Rule Report Generator
+→ LLM Report Agent
+→ Quality Guard
+→ 输出仓库评估报告
+```
 
-#### 2. app/agents/type_classifier.py
+整体设计分为以下几层：
 
-读取 state.basic_info → 根据 topics、description、README、language → 判断项目类型 → 写入 state.project_type
+```text
+API 层
+→ FastAPI 对外提供接口
 
-#### 3. app/agents/metric_collector.py
+决策层
+→ LangGraph + Supervisor 条件分支
 
-读取 state.owner 和 state.repo → 调用 OpenDigger → 整理 GitHub 基础指标 → 写入 state.raw_metrics
+工具层
+→ GitHub API、OpenDigger API、Redis
 
-#### 4. app/agents/metric_selector.py
+规则型 Agent 层
+→ 负责稳定、可控、确定性的处理逻辑
 
-读取 state.project_type 和 state.raw_metrics → 根据项目类型选择核心评估指标 → 从 OpenDigger 时间序列中提取最新指标值 → 为每个指标添加来源和选择理由 → 写入 state.selected_metrics
+AI Agent 层
+→ 调用 LLM 进行报告生成和复杂语义处理
 
-#### 5. app/agents/rag_retrieval.py
+知识库层
+→ 存放指标定义、适用场景和局限性
+```
 
-读取 selected_metrics → 读取 knowledge_base/metrics.md → 根据指标名找到对应知识库章节 → 把指标解释写入 state.retrieved_context
+---
 
-#### 6. app/agents/report_generator.py
+## 4. 核心功能
 
-读取 selected_metrics → 根据规则计算各维度分数 → 生成结构化 EvaluationReport → 写入 state.report
+### 4.1 GitHub 仓库解析
 
-#### 7. app/agents/quality_guard.py
+系统支持输入 GitHub 仓库地址，例如：
 
-读取 state.report 和 state.selected_metrics → 检查报告是否完整、分数是否合理、数据来源是否存在、是否缺少关键字段 → 把检查结果写入 state.quality_result
+```text
+https://github.com/langchain-ai/langgraph
+```
 
-### 提示词
+解析得到：
 
-#### 1. app/prompts/llm_report_prompt.md
+```text
+owner = langchain-ai
+repo = langgraph
+```
 
-- 给 LLM Report Agent 使用
-- 输入 项目基础信息、项目类型、GitHub/OpenDigger 核心指标、RAG 检索得到的指标解释、规则版报告，要求 LLM 生成结构化 JSON 格式的开源项目评估报告
+### 4.2 GitHub API 数据采集
 
-### AI Agent层 —— 调用 LLM 进行复杂问题理解和处理
+系统调用 GitHub API 获取项目基础信息：
 
-#### 1. app/agents/ai_agents/llm_report_generator.py
+- stars
+- forks
+- open issues
+- language
+- topics
+- license
+- README
 
-**利用 LLM 优化 report_generator 生成的报告**
+### 4.3 OpenDigger 指标采集
 
-读取 state.basic_info、state.project_type、state.selected_metrics 和规则版 state.report → 读取提示词模板 → 把
+系统调用 OpenDigger 获取开源健康度指标：
 
-- 项目基础信息
-- 核心指标及结果
-- 本地指标知识库指标解释
+- OpenRank
+- Activity
+- Contributors
+- Bus Factor
+- Issue Response Time
+- Issue Resolution Duration
+- Change Request Response Time
+
+### 4.4 核心指标筛选
+
+系统不会把所有原始指标直接交给 LLM，而是先根据项目类型筛选关键指标。
+
+例如对于 AI Framework / Agent Framework，系统会优先选择：
+
+- stars
+- forks
+- open issues
+- license
+- readme_exists
+- openrank
+- activity
+- contributors
+- bus_factor
+- issue_response_time
+- change_request_response_time
+
+### 4.5 RAG 指标解释
+
+当前版本实现了轻量 RAG：
+
+```text
+selected_metrics
+→ 读取 knowledge_base/metrics.md
+→ 根据指标名匹配对应章节
+→ 写入 state.retrieved_context
+→ LLM Report Agent 使用这些内容生成报告
+```
+
+后续计划升级为完全版 RAG：
+
+```text
+多文档知识库
+→ 文档切分
+→ 本地索引
+→ 检索相关 chunk
+→ 返回引用来源
+→ LLM 使用检索结果生成报告
+```
+
+### 4.6 LLM 报告生成
+
+系统先生成规则版 baseline 报告，再调用 LLM 基于以下内容生成最终结构化报告：
+
+- GitHub 项目基础信息
+- OpenDigger 核心指标
+- RAG 检索到的指标解释
 - 规则版报告
 
-填入 Prompt → 调用 LLM 生成更自然、更完整的结构化评估报告 → 解析 LLM 返回的 JSON → 校验为 `EvaluationReport` → 覆盖写入 `state.report`
+如果 LLM 调用失败，系统会保留规则版报告作为 fallback。
 
-### 知识库
+### 4.7 Quality Guard
 
-#### 1. knowledge_base/metrics.md (RAG DEMO)
+Quality Guard 会检查报告是否满足基本质量要求，包括：
 
-- 给 RAG Retrieval Agent 使用。
-- 保存 openrank、activity、bus_factor、issue_response_time 等指标的定义、适用场景和局限性。
-- LLM 生成报告时，可以引用这些解释，让报告更可解释。
+- overall_score 是否在 0-100
+- dimension_scores 是否完整
+- 每个维度分数是否在 0-20
+- summary 是否存在
+- strengths / risks / suggestions 是否为空
+- data_sources 是否存在
+- selected_metrics 是否存在
 
-### 异常处理
+如果 Quality Guard 不通过，Supervisor 会尝试重新调用一次 LLM Report Agent。
 
-#### 1. 传入非法地址
+### 4.8 Redis 支持
 
-处理位置：app/main.py
+Redis 当前用于：
 
+- 缓存 GitHub / OpenDigger 指标结果
+- 保存历史评估报告
+- 保存 task_id 对应的任务状态
+- 支持 use_cached_report 快速返回历史报告
+
+---
+
+## 5. 技术栈
+
+```text
+Python 3.13
+FastAPI
+LangGraph
+LangChain
+DeepSeek / OpenAI-compatible API
+Pydantic
+Pydantic Settings
+Redis
+Docker Compose
+httpx
+uv
 ```
+
+---
+
+## 6. 项目结构
+
+```text
+app/
+├── main.py
+├── graph.py
+├── schemas.py
+├── config.py
+├── tools/
+│   ├── github_client.py
+│   ├── opendigger_client.py
+│   └── redis_store.py
+├── agents/
+│   ├── project_parser.py
+│   ├── type_classifier.py
+│   ├── metric_collector.py
+│   ├── metric_selector.py
+│   ├── rag_retrieval.py
+│   ├── report_generator.py
+│   ├── quality_guard.py
+│   └── ai_agents/
+│       └── llm_report_generator.py
+├── prompts/
+│   └── llm_report_prompt.md
+knowledge_base/
+└── metrics.md
+docs/
+├── architecture.md
+├── modules.md
+├── api.md
+├── error_handling.md
+├── performance.md
+└── interview_story.md
+docker-compose.yml
+README.md
+pyproject.toml
+```
+
+核心文件说明：
+
+| 路径                             | 作用                                               |
+| -------------------------------- | -------------------------------------------------- |
+| `app/main.py`                    | FastAPI 后端入口，提供评估、任务状态、历史报告接口 |
+| `app/graph.py`                   | LangGraph 工作流入口，包含 Supervisor 条件分支     |
+| `app/schemas.py`                 | Pydantic 数据结构定义                              |
+| `app/config.py`                  | 环境变量配置                                       |
+| `app/tools/github_client.py`     | GitHub API 工具                                    |
+| `app/tools/opendigger_client.py` | OpenDigger 指标工具                                |
+| `app/tools/redis_store.py`       | Redis 存储工具                                     |
+| `app/agents/`                    | 规则型 Agent / 工作流节点                          |
+| `app/agents/ai_agents/`          | 调用 LLM 的 AI Agent                               |
+| `app/prompts/`                   | Prompt 模板                                        |
+| `knowledge_base/`                | 本地知识库                                         |
+| `docs/`                          | 项目详细文档                                       |
+
+---
+
+## 7. 快速启动
+
+### 7.1 安装依赖
+
+```powershell
+uv sync
+```
+
+### 7.2 配置环境变量
+
+在项目根目录创建 `.env` 文件：
+
+```env
+GITHUB_TOKEN=your_github_token
+
+LLM_PROVIDER=deepseek
+MODEL_NAME=your_model_name
+DEEPSEEK_API_KEY=your_deepseek_or_proxy_key
+DEEPSEEK_BASE_URL=your_deepseek_or_proxy_base_url
+
+REDIS_URL=redis://localhost:6379/0
+```
+
+注意：
+
+```text
+.env 不要提交到 GitHub。
+```
+
+### 7.3 启动 Redis
+
+```powershell
+docker compose up -d
+```
+
+### 7.4 启动 FastAPI
+
+```powershell
+uv run uvicorn app.main:app --reload
+```
+
+访问接口文档：
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+---
+
+## 8. API 快速示例
+
+### 8.1 健康检查
+
+```text
+GET /health
+```
+
+返回：
+
+```json
+{
+  "status": "ok"
+}
+```
+
+### 8.2 执行仓库评估
+
+```text
+POST /evaluate
+```
+
+请求：
+
+```json
+{
+  "url": "https://github.com/langchain-ai/langgraph",
+  "use_cached_report": false
+}
+```
+
+返回核心字段：
+
+```json
+{
+  "task_id": "xxx",
+  "status": "completed",
+  "cache_hit": false,
+  "owner": "langchain-ai",
+  "repo": "langgraph",
+  "project_type": "AI Framework / Agent Framework",
+  "overall_score": 85,
+  "summary": "...",
+  "strengths": [],
+  "risks": [],
+  "suggestions": [],
+  "quality_result": {
+    "passed": true,
+    "issues": [],
+    "suggestions": []
+  },
+  "errors": []
+}
+```
+
+### 8.3 使用历史报告缓存
+
+```json
+{
+  "url": "https://github.com/langchain-ai/langgraph",
+  "use_cached_report": true
+}
+```
+
+如果 Redis 中已有历史报告，会返回：
+
+```json
+{
+  "status": "completed",
+  "cache_hit": true
+}
+```
+
+### 8.4 查询任务状态
+
+```text
+GET /tasks/{task_id}
+```
+
+### 8.5 查询最近历史报告
+
+```text
+GET /reports/recent
+```
+
+### 8.6 查询指定仓库历史报告
+
+```text
+GET /reports/{owner}/{repo}
+```
+
+---
+
+## 9. 异常处理
+
+当前支持以下异常处理：
+
+| 异常场景          | 处理策略                                                     |
+| ----------------- | ------------------------------------------------------------ |
+| 非法 GitHub URL   | 在 API 层直接返回 `invalid_github_url`                       |
+| GitHub 仓库不存在 | 返回 `github_repo_not_found`                                 |
+| LLM 生成报告失败  | 保留规则版报告作为 fallback                                  |
+| Redis 不可用      | 主评估流程不崩溃，降级为无缓存、无历史报告、无任务状态持久化 |
+
+示例：
+
+```json
 {
   "status": "failed",
   "error_type": "invalid_github_url",
-  "message": "Invalid GitHub repository URL. Example: XXX"
+  "message": "Invalid GitHub repository URL. Example: https://github.com/langchain-ai/langgraph"
 }
 ```
 
-#### 2. GitHub 仓库不存在
+详细说明见：
 
-处理位置：app/main.py、app/tools/github_client.py
-
-```
-{
-  "status": "failed",
-  "error_type": "github_repo_not_found",
-  "message": "GitHub repository not found or not accessible"
-}
+```text
+docs/error_handling.md
 ```
 
-#### 3. LLM 生成报告失败
+---
 
-**返回规则版报告**
+## 10. 性能优化
 
-处理位置：app/agents/ai_agents/llm_report_generator.py
+已完成的性能优化：
 
+- OpenDigger 指标从串行请求改为并发请求
+- Redis 设置短超时，失败快速返回
+- GitHub / OpenDigger 指标缓存
+- 历史报告缓存快速返回
+
+实测结果：
+
+```text
+Redis 停止 + 串行 OpenDigger：
+平均约 218.82 秒
+
+Redis 停止 + OpenDigger 并发请求：
+约 85.50 秒
+
+Redis 停止 + OpenDigger 并发 + Redis 快速失败：
+约 41.42 秒
+
+Redis 正常 + 指标缓存 + LLM 重新生成：
+约 17.1 秒
+
+Redis 正常 + use_cached_report=true：
+约 0.03 秒
 ```
-errors: ['LLM report generation failed: Unsupported LLM provider: XXX. Using rule-based report fallback.']
+
+详细说明见：
+
+```text
+docs/performance.md
 ```
 
-#### 4. Redis 不可用
+---
 
-**主评估流程不崩溃，只有保存缓存、历史报告、任务状态的功能不可用**
+## 11. 当前完成度
 
-Redis 不可用时，系统会降级为无缓存、无历史记录、无任务状态持久化，但仍然可以完成仓库评估并返回报告
+已完成：
 
-处理位置：app/main.py、app/tools/redis_store.py、app/tools/github_client.py、app/tools/opendigger_client.py
+- GitHub 仓库链接解析
+- GitHub API 数据采集
+- OpenDigger 指标采集
+- Redis 指标缓存
+- Redis 历史报告保存
+- Redis 任务状态保存
+- LangGraph 工作流编排
+- Supervisor 条件分支
+- Quality Guard 失败重试一次
+- 规则型项目分类
+- 核心指标筛选
+- 轻量 RAG 检索
+- 规则版报告生成
+- LLM 报告生成
+- Quality Guard 质量检查
+- LLM 失败规则报告兜底
+- 非法 URL 异常处理
+- GitHub 仓库不存在异常处理
+- Redis 不可用降级
+- 历史报告缓存快速返回
+- API 返回结构优化
 
+待完善：
+
+- 完全版 RAG
+- 更强的 LLM Quality Reviewer
+- 更丰富的知识库来源
+- 项目文档细化
+
+---
+
+## 12. 项目亮点
+
+### 12.1 规则节点和 AI Agent 分层
+
+系统没有把所有任务都交给 LLM，而是将任务分成：
+
+```text
+规则型节点：
+负责解析、采集、筛选、校验等稳定任务。
+
+AI Agent：
+负责复杂语义生成和自然语言报告。
 ```
-errors: ['Failed to save report history: Error 10061 connecting to localhost:6379.']
+
+这样可以降低幻觉风险，提高系统稳定性。
+
+### 12.2 先规则报告，再 LLM 增强
+
+系统不会让 LLM 从零生成报告，而是：
+
+```text
+先生成规则版 baseline 报告
+→ 再让 LLM 基于真实指标和 RAG 内容优化报告
 ```
 
-### 遇到的问题
+这样即使 LLM 失败，也可以返回规则版报告。
 
-#### 1. 禁用Redis后评估流程响应时间较长
+### 12.3 RAG 增强可解释性
 
-- **3 次平均响应时长 218.82 秒 → 并行优化后耗时 85.50 秒 → 短超时优化后耗时 41.42 秒，减少了约 81% 时间**
-- Redis 正常 + 缓存可用：约 17.1 秒 (主要是 LLM 生成报告的耗时)
-- **原因**：Redis 停止后缓存失效，OpenDigger 15 个指标变成串行网络请求；每次缓存读取/写入都要先等待失败
-- **解决方案**：OpenDigger 指标从串行请求变为并发请求 + 通过短超时给 Redis 设置快速失败机制
-- 增加多次评估同一仓库可选择复用之前的 LLM 报告机制，Redis 命中后耗时大约 0.03秒
+LLM 报告不是只看指标值，而是结合知识库中对指标的解释，例如：
 
-#### 2. 
+- OpenRank 为什么重要
+- Bus Factor 有什么风险
+- Issue Response Time 适合判断什么
 
+这样报告更可解释。
+
+### 12.4 Redis 提升工程完整度
+
+Redis 不只是缓存工具，还用于：
+
+- 指标缓存
+- 历史报告
+- 任务状态
+- 缓存报告快速返回
+
+体现了真实后端系统中的状态管理和性能优化意识。
+
+### 12.5 Supervisor 条件分支
+
+系统不是完全直线流程，而是具备基础 Supervisor 决策能力：
+
+- 出错提前结束
+- LLM 失败使用规则报告兜底
+- Quality Guard 失败重试一次
+
+---
+
+## 13. Demo 流程
+
+推荐演示顺序：
+
+```text
+1. 启动 Redis
+2. 启动 FastAPI
+3. 访问 /health
+4. 调用 /evaluate 正常评估仓库
+5. 展示 LLM + RAG 生成的报告
+6. 展示 task_id
+7. 查询 /tasks/{task_id}
+8. 查询 /reports/recent
+9. 查询 /reports/{owner}/{repo}
+10. 使用 use_cached_report=true 展示毫秒级返回
+11. 测试非法 URL 异常
+12. 测试 GitHub 仓库不存在异常
+13. 讲解 LLM 失败 fallback
+14. 讲解 Redis 不可用降级
+```
+
+---
+
+## 14. 文档导航
+
+| 文档                      | 内容                                                    |
+| ------------------------- | ------------------------------------------------------- |
+| `docs/architecture.md`    | 系统架构、框架图、LangGraph 工作流、Supervisor 条件分支 |
+| `docs/modules.md`         | 各模块、工具、规则型 Agent、AI Agent 的职责             |
+| `docs/api.md`             | API 请求、返回结构和字段说明                            |
+| `docs/error_handling.md`  | 异常处理和降级兜底策略                                  |
+| `docs/performance.md`     | 性能优化记录和响应时间对比                              |
+| `docs/interview_story.md` | 面试讲解稿和 Demo 讲解顺序                              |
+
+---
+
+## 15. 后续计划
+
+### 15.1 完全版 RAG
+
+计划升级为：
+
+```text
+多文档知识库
+→ 文档切分
+→ 本地索引
+→ 检索相关 chunk
+→ 返回来源
+→ LLM 使用检索结果生成报告
+```
+
+### 15.2 LLM Quality Reviewer
+
+当前 Quality Guard 是规则检查，后续计划增加 LLM 语义审查能力：
+
+- 检查报告是否空泛
+- 检查结论是否有指标依据
+- 检查是否误读指标
+- 检查是否存在自相矛盾
+
+### 15.3 多仓库对比
+
+后续可以支持：
+
+```text
+输入多个 GitHub 仓库
+→ 统一采集指标
+→ 横向比较评分
+→ 生成技术选型建议
+```
+
+---
+
+## 16. 总结
+
+本项目是一个面向技术选型场景的后端 AI 应用系统，基于 LangGraph 编排 GitHub / OpenDigger 工具调用、RAG 指标解释、LLM 报告生成、Quality Guard 质量控制和 Redis 状态管理，实现对 GitHub 开源项目的自动化、可解释、结构化评估。

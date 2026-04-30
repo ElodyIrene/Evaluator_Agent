@@ -13,6 +13,9 @@ from app.agents.type_classifier import type_classifier_agent
 from app.schemas import EvaluationState
 
 
+MAX_QUALITY_RETRY = 1
+
+
 def _ensure_state(state: EvaluationState | dict[str, Any]) -> EvaluationState:
     """Convert LangGraph state into EvaluationState if needed."""
     if isinstance(state, EvaluationState):
@@ -24,6 +27,49 @@ def _ensure_state(state: EvaluationState | dict[str, Any]) -> EvaluationState:
 def _to_dict(state: EvaluationState) -> dict[str, Any]:
     """Convert EvaluationState back to dict for LangGraph."""
     return state.model_dump(mode="python")
+
+
+def _route_on_errors(state: EvaluationState | dict[str, Any]) -> str:
+    """Supervisor decision: stop early if the workflow already has fatal errors."""
+    current_state = _ensure_state(state)
+
+    if current_state.errors:
+        return "end"
+
+    return "continue"
+
+
+def _route_after_llm_report(state: EvaluationState | dict[str, Any]) -> str:
+    """Supervisor decision after LLM report generation.
+
+    LLM failure is not always fatal because the rule-based report can be used as fallback.
+    Continue to Quality Guard as long as a report exists.
+    """
+    current_state = _ensure_state(state)
+
+    if current_state.report is not None:
+        return "continue"
+
+    return "end"
+
+
+def _route_after_quality_guard(state: EvaluationState | dict[str, Any]) -> str:
+    """Supervisor decision after Quality Guard.
+
+    If the report fails quality checks, retry LLM report generation once.
+    """
+    current_state = _ensure_state(state)
+
+    if current_state.quality_result is None:
+        return "end"
+
+    if current_state.quality_result.passed:
+        return "end"
+
+    if current_state.retry_count < MAX_QUALITY_RETRY:
+        return "retry"
+
+    return "end"
 
 
 def project_parser_node(state: EvaluationState | dict[str, Any]) -> dict[str, Any]:
@@ -74,8 +120,18 @@ def quality_guard_node(state: EvaluationState | dict[str, Any]) -> dict[str, Any
     return _to_dict(new_state)
 
 
+def prepare_quality_retry_node(state: EvaluationState | dict[str, Any]) -> dict[str, Any]:
+    """Prepare state before retrying LLM report generation."""
+    current_state = _ensure_state(state)
+
+    current_state.retry_count += 1
+    current_state.quality_result = None
+
+    return _to_dict(current_state)
+
+
 def build_graph():
-    """Build the LangGraph backend workflow."""
+    """Build the LangGraph backend workflow with Supervisor routing."""
     workflow = StateGraph(EvaluationState)
 
     workflow.add_node("project_parser", project_parser_node)
@@ -86,17 +142,83 @@ def build_graph():
     workflow.add_node("report_generator", report_generator_node)
     workflow.add_node("llm_report_generator", llm_report_generator_node)
     workflow.add_node("quality_guard", quality_guard_node)
+    workflow.add_node("prepare_quality_retry", prepare_quality_retry_node)
 
     workflow.set_entry_point("project_parser")
 
-    workflow.add_edge("project_parser", "type_classifier")
-    workflow.add_edge("type_classifier", "metric_collector")
-    workflow.add_edge("metric_collector", "metric_selector")
-    workflow.add_edge("metric_selector", "rag_retrieval")
-    workflow.add_edge("rag_retrieval", "report_generator")
-    workflow.add_edge("report_generator", "llm_report_generator")
-    workflow.add_edge("llm_report_generator", "quality_guard")
-    workflow.add_edge("quality_guard", END)
+    workflow.add_conditional_edges(
+        "project_parser",
+        _route_on_errors,
+        {
+            "continue": "type_classifier",
+            "end": END,
+        },
+    )
+
+    workflow.add_conditional_edges(
+        "type_classifier",
+        _route_on_errors,
+        {
+            "continue": "metric_collector",
+            "end": END,
+        },
+    )
+
+    workflow.add_conditional_edges(
+        "metric_collector",
+        _route_on_errors,
+        {
+            "continue": "metric_selector",
+            "end": END,
+        },
+    )
+
+    workflow.add_conditional_edges(
+        "metric_selector",
+        _route_on_errors,
+        {
+            "continue": "rag_retrieval",
+            "end": END,
+        },
+    )
+
+    workflow.add_conditional_edges(
+        "rag_retrieval",
+        _route_on_errors,
+        {
+            "continue": "report_generator",
+            "end": END,
+        },
+    )
+
+    workflow.add_conditional_edges(
+        "report_generator",
+        _route_on_errors,
+        {
+            "continue": "llm_report_generator",
+            "end": END,
+        },
+    )
+
+    workflow.add_conditional_edges(
+        "llm_report_generator",
+        _route_after_llm_report,
+        {
+            "continue": "quality_guard",
+            "end": END,
+        },
+    )
+
+    workflow.add_conditional_edges(
+        "quality_guard",
+        _route_after_quality_guard,
+        {
+            "retry": "prepare_quality_retry",
+            "end": END,
+        },
+    )
+
+    workflow.add_edge("prepare_quality_retry", "llm_report_generator")
 
     return workflow.compile()
 
@@ -121,6 +243,7 @@ if __name__ == "__main__":
     print("project_type:", final_state.project_type)
     print("selected metric count:", len(final_state.selected_metrics))
     print("retrieved context count:", len(final_state.retrieved_context))
+    print("retry_count:", final_state.retry_count)
 
     if final_state.report:
         print("overall_score:", final_state.report.overall_score)
