@@ -274,10 +274,12 @@ app/
 │   ├── rag_retrieval.py
 │   ├── report_generator.py
 │   ├── quality_guard.py
-│   └── ai_agents/
-│       └── llm_report_generator.py
+ ai_agents/
+│       ├── llm_report_generator.py
+|		└── llm_quality_reviewer.py
 ├── prompts/
-│   └── llm_report_prompt.md
+│   ├── llm_report_prompt.md
+│   └── llm_quality_reviewer_prompt.md
 knowledge_base/
 └── metrics.md
 docs/
@@ -537,6 +539,7 @@ docs/performance.md
 - 规则版报告生成
 - LLM 报告生成
 - Quality Guard 质量检查
+- LLM Quality Reviewer 语义质量审查
 - LLM 失败规则报告兜底
 - 非法 URL 异常处理
 - GitHub 仓库不存在异常处理
@@ -626,6 +629,14 @@ Redis 不只是缓存工具，还用于：
 - 出错提前结束
 - LLM 失败使用规则报告兜底
 - Quality Guard 失败重试一次
+
+### 12.6 LLM Quality Reviewer 语义审查
+
+系统在规则版 Quality Guard 之后增加了 LLM Quality Reviewer。
+
+规则版 Quality Guard 负责检查字段完整性、分数范围和数据来源；LLM Quality Reviewer 进一步检查报告是否误读指标、是否存在无依据结论、风险和建议是否匹配。
+
+这让系统的质量控制从“格式检查”升级为“语义审查”。
 
 ---
 
