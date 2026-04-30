@@ -107,7 +107,7 @@
 
 #### 1. 传入非法地址
 
-app/main.py
+处理位置：app/main.py
 
 ```
 {
@@ -119,7 +119,7 @@ app/main.py
 
 #### 2. GitHub 仓库不存在
 
-app/tools/github_client.py
+处理位置：app/main.py、app/tools/github_client.py
 
 ```
 {
@@ -133,7 +133,7 @@ app/tools/github_client.py
 
 **返回规则版报告**
 
-app/agents/ai_agents/llm_report_generator.py
+处理位置：app/agents/ai_agents/llm_report_generator.py
 
 ```
 errors: ['LLM report generation failed: Unsupported LLM provider: XXX. Using rule-based report fallback.']
@@ -141,7 +141,11 @@ errors: ['LLM report generation failed: Unsupported LLM provider: XXX. Using rul
 
 #### 4. Redis 不可用
 
-主评估流程不崩溃，只有保存缓存、历史报告、任务状态的功能不可用
+**主评估流程不崩溃，只有保存缓存、历史报告、任务状态的功能不可用**
+
+Redis 不可用时，系统会降级为无缓存、无历史记录、无任务状态持久化，但仍然可以完成仓库评估并返回报告
+
+处理位置：app/main.py、app/tools/redis_store.py、app/tools/github_client.py、app/tools/opendigger_client.py
 
 ```
 errors: ['Failed to save report history: Error 10061 connecting to localhost:6379.']
