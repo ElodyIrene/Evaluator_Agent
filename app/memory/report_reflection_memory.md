@@ -6,3 +6,4 @@
 - When discussing activity metrics, avoid inventing units and describe the value as an activity signal unless the metric definition provides a unit.
 - Make suggestions specific, actionable, and tied to observed metrics.
 - The 'Community Health' dimension score of 10 is low but justified by the evidence of only 3 contributors. This is acceptable as the report explains the limitation.
+- Consider rephrasing 'Strengtain' to 'Strengthen' in the suggestions section.
