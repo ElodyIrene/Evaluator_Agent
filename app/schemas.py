@@ -71,5 +71,14 @@ class EvaluationState(BaseModel):
     retrieved_context: list[RetrievedDoc] = Field(default_factory=list)
     report: EvaluationReport | None = None
     quality_result: QualityResult | None = None
+    review_feedback: str | None = None
+    review_retry_count: int = 0
+    repair_target: str | None = None
+    repair_plan: str | None = None
+    repair_retry_count: int = 0
+    repair_history: list[dict[str, str]] = Field(default_factory=list)
     retry_count: int = 0
     errors: list[str] = Field(default_factory=list)
+
+
+

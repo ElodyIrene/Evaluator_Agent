@@ -110,18 +110,25 @@ def _score_community(metrics: list[SelectedMetric]) -> int:
 
 
 def _score_documentation(metrics: list[SelectedMetric]) -> int:
+    """Score documentation and governance conservatively.
+
+    Current available evidence is limited to README existence and license.
+    Because we do not yet check contributing guides, code of conduct,
+    examples, governance docs, or README quality, this dimension should not
+    receive a perfect score from binary signals alone.
+    """
     readme_exists = bool(_find_metric(metrics, "readme_exists"))
     license_value = _find_metric(metrics, "license")
 
-    score = 8
+    score = 6
 
     if readme_exists:
-        score += 7
-
-    if license_value:
         score += 5
 
-    return min(score, 20)
+    if license_value:
+        score += 4
+
+    return min(score, 15)
 
 
 def report_generator_agent(state: EvaluationState) -> EvaluationState:
@@ -189,3 +196,4 @@ if __name__ == "__main__":
     print("dimension_scores:", state.report.dimension_scores if state.report else None)
     print("summary:", state.report.summary if state.report else None)
     print("errors:", state.errors)
+

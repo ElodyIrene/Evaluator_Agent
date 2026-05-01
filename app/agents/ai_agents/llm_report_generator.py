@@ -33,10 +33,15 @@ def _extract_json(text: str) -> dict[str, Any]:
         text = re.sub(r"\s*```$", "", text)
 
     match = re.search(r"\{.*\}", text, re.DOTALL)
+
     if not match:
         raise ValueError("No JSON object found in LLM response.")
 
     return json.loads(match.group(0))
+
+
+def _json_dumps(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, indent=2)
 
 
 def _build_prompt(state: EvaluationState) -> str:
@@ -64,7 +69,7 @@ def _build_prompt(state: EvaluationState) -> str:
 
     prompt = template.replace(
         "{basic_info}",
-        json.dumps(basic_info, ensure_ascii=False, indent=2),
+        _json_dumps(basic_info),
     )
     prompt = prompt.replace(
         "{project_type}",
@@ -72,16 +77,46 @@ def _build_prompt(state: EvaluationState) -> str:
     )
     prompt = prompt.replace(
         "{selected_metrics}",
-        json.dumps(selected_metrics, ensure_ascii=False, indent=2),
+        _json_dumps(selected_metrics),
     )
     prompt = prompt.replace(
         "{retrieved_context}",
-        json.dumps(retrieved_context, ensure_ascii=False, indent=2),
+        _json_dumps(retrieved_context),
     )
     prompt = prompt.replace(
         "{rule_report}",
-        json.dumps(rule_report, ensure_ascii=False, indent=2),
+        _json_dumps(rule_report),
     )
+
+    if state.repair_plan:
+        prompt += """
+
+Supervisor repair plan:
+{repair_plan}
+
+You must follow this repair plan when rewriting the report.
+""".replace(
+            "{repair_plan}",
+            state.repair_plan,
+        )
+
+    if state.review_feedback:
+        prompt += """
+
+Reviewer feedback from the previous report review:
+{review_feedback}
+
+Rewrite requirements:
+- Fix every issue mentioned by the reviewer.
+- Keep the output as valid JSON only.
+- Do not add Markdown.
+- Do not invent data.
+- Keep scores consistent with the selected metrics.
+- Make strengths, risks, and suggestions more specific and evidence-based.
+""".replace(
+            "{review_feedback}",
+            state.review_feedback,
+        )
 
     return prompt
 
@@ -107,24 +142,26 @@ def _create_llm() -> ChatOpenAI:
 
 
 def llm_report_generator_agent(state: EvaluationState) -> EvaluationState:
-    """Generate a structured evaluation report using an LLM."""
+    """Generate or rewrite a structured evaluation report using an LLM."""
     if not state.selected_metrics:
         state.errors.append("Cannot generate LLM report because selected_metrics is empty.")
         return state
 
     if not state.retrieved_context:
-        state.errors.append("Warning: retrieved_context is empty. LLM report will not use RAG knowledge.")
+        state.errors.append(
+            "Warning: retrieved_context is empty. LLM report will not use RAG knowledge."
+        )
 
     if state.report is None:
         state = report_generator_agent(state)
 
     try:
         llm = _create_llm()
-
         prompt = _build_prompt(state)
-        response = llm.invoke(prompt)
 
+        response = llm.invoke(prompt)
         content = response.content
+
         if not isinstance(content, str):
             content = str(content)
 
@@ -132,7 +169,9 @@ def llm_report_generator_agent(state: EvaluationState) -> EvaluationState:
         state.report = EvaluationReport.model_validate(data)
 
     except Exception as error:
-        state.errors.append(f"LLM report generation failed: {error}. Using rule-based report fallback.")
+        state.errors.append(
+            f"LLM report generation failed: {error}. Using rule-based report fallback."
+        )
 
     return state
 
@@ -148,16 +187,20 @@ if __name__ == "__main__":
     state = metric_selector_agent(state)
     state = rag_retrieval_agent(state)
     state = report_generator_agent(state)
+
+    state.review_feedback = "Previous report was too generic. Please make risks and suggestions more evidence-based."
+    state.review_retry_count = 1
+
     state = llm_report_generator_agent(state)
 
     print("repo:", state.report.repo if state.report else None)
     print("project_type:", state.report.project_type if state.report else None)
     print("retrieved context count:", len(state.retrieved_context))
+    print("review_retry_count:", state.review_retry_count)
     print("overall_score:", state.report.overall_score if state.report else None)
-    print("dimension_scores:", state.report.dimension_scores if state.report else None)
     print("summary:", state.report.summary if state.report else None)
     print("strengths:", state.report.strengths if state.report else None)
     print("risks:", state.report.risks if state.report else None)
     print("suggestions:", state.report.suggestions if state.report else None)
-    print("data_sources:", state.report.data_sources if state.report else None)
     print("errors:", state.errors)
+
