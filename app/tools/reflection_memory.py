@@ -9,6 +9,7 @@ CANONICAL_LESSONS = {
     "response_time": "When discussing response time metrics, mention the metric name, time period, and quantile when available.",
     "bus_factor": "When discussing bus_factor, explain it carefully, do not treat a high value as a risk by default, and compare it with contributor count.",
     "open_issues": "When interpreting open issue count, describe it as a relative maintenance pressure signal and avoid treating the raw number alone as definitive evidence.",
+    "activity": "When discussing activity metrics, avoid inventing units and describe the value as an activity signal unless the metric definition provides a unit.",
     "documentation": "When suggesting documentation improvements, link them to concrete evidence such as README limitations, open issues, or missing governance signals.",
     "actionability": "Make suggestions specific, actionable, and tied to observed metrics.",
 }
@@ -18,6 +19,7 @@ CANONICAL_ORDER = [
     "response_time",
     "bus_factor",
     "open_issues",
+    "activity",
     "documentation",
     "actionability",
 ]
@@ -53,6 +55,9 @@ def _detect_lesson_category(text: str) -> str | None:
         or "backlog" in lower_text
     ):
         return "open_issues"
+
+    if "activity metric" in lower_text or "activity" in lower_text:
+        return "activity"
 
     if "documentation" in lower_text or "readme" in lower_text or "governance" in lower_text:
         return "documentation"
@@ -167,9 +172,9 @@ def save_report_reflection_suggestions(suggestions: list[str]) -> None:
 if __name__ == "__main__":
     save_report_reflection_suggestions(
         [
-            "The report could explicitly mention the metric open_issues when discussing maintenance backlog risk.",
-            "Consider clarifying that the bus factor is a high value and should be compared with contributor count.",
-            "Make the documentation suggestion more actionable.",
+            "Consider clarifying the unit for the activity metric (289.15) if it is known.",
+            "When discussing bus_factor, compare it with contributor count.",
+            "Make suggestions specific and actionable.",
         ]
     )
 

@@ -1,11 +1,15 @@
 ﻿import json
 import re
+from pathlib import Path
 from typing import Any
 
 from langchain_openai import ChatOpenAI
 
 from app.config import settings
 from app.schemas import EvaluationState
+
+
+PROMPT_PATH = Path("app/prompts/llm_repair_planner_prompt.md")
 
 
 ALLOWED_REPAIR_TARGETS = {
@@ -15,6 +19,11 @@ ALLOWED_REPAIR_TARGETS = {
     "llm_report_generator",
     "end",
 }
+
+
+def _load_prompt_template() -> str:
+    """Load the LLM repair planner prompt from a markdown file."""
+    return PROMPT_PATH.read_text(encoding="utf-8-sig")
 
 
 def _extract_json(text: str) -> dict[str, Any]:
@@ -66,6 +75,9 @@ def _create_llm() -> ChatOpenAI:
             base_url=settings.deepseek_base_url,
             timeout=60,
             max_retries=2,
+            model_kwargs={
+                "response_format": {"type": "json_object"},
+            },
         )
 
     raise ValueError(f"Unsupported LLM provider: {settings.llm_provider}")
@@ -73,7 +85,10 @@ def _create_llm() -> ChatOpenAI:
 
 def _build_repair_prompt(state: EvaluationState) -> str:
     """Build prompt for deciding which workflow node should be repaired."""
+    template = _load_prompt_template()
+
     report = state.report.model_dump(mode="json") if state.report else None
+
     quality_result = (
         state.quality_result.model_dump(mode="json")
         if state.quality_result
@@ -90,57 +105,16 @@ def _build_repair_prompt(state: EvaluationState) -> str:
         for doc in state.retrieved_context
     ]
 
-    return f"""
-You are the supervisor planner for a LangGraph multi-agent open-source project evaluator.
+    prompt = template.replace("{owner}", str(state.owner))
+    prompt = prompt.replace("{repo}", str(state.repo))
+    prompt = prompt.replace("{project_type}", str(state.project_type))
+    prompt = prompt.replace("{selected_metrics}", _json_dumps(selected_metrics))
+    prompt = prompt.replace("{retrieved_context_count}", str(len(retrieved_context)))
+    prompt = prompt.replace("{quality_result}", _json_dumps(quality_result))
+    prompt = prompt.replace("{report}", _json_dumps(report))
+    prompt = prompt.replace("{review_feedback}", str(state.review_feedback))
 
-The LLM quality reviewer found problems in the generated report.
-Your job is to decide which workflow node should be repaired next.
-
-Allowed repair_target values:
-
-1. "type_classifier"
-Use this if the project type is probably wrong, too broad, or inconsistent with repository metadata.
-
-2. "metric_selector"
-Use this if the selected metrics are missing, irrelevant, contradictory, or insufficient for the evaluation.
-
-3. "rag_retrieval"
-Use this if the report lacks metric definitions, evaluation criteria, or background knowledge.
-
-4. "llm_report_generator"
-Use this if the selected metrics and context are enough, but the final report is generic, inconsistent, poorly written, unsupported, or not actionable.
-
-5. "end"
-Use this if the issue cannot be safely fixed automatically, or if another retry is not worth doing.
-
-Current project:
-owner: {state.owner}
-repo: {state.repo}
-project_type: {state.project_type}
-
-Selected metrics:
-{_json_dumps(selected_metrics)}
-
-Retrieved context count:
-{len(retrieved_context)}
-
-Quality review result:
-{_json_dumps(quality_result)}
-
-Current report:
-{_json_dumps(report)}
-
-Previous review feedback:
-{state.review_feedback}
-
-Return valid JSON only. Do not return Markdown.
-
-JSON schema:
-{{
-  "repair_target": "type_classifier | metric_selector | rag_retrieval | llm_report_generator | end",
-  "repair_plan": "Concrete short plan explaining what should be fixed and why."
-}}
-"""
+    return prompt
 
 
 def _fallback_repair_target(state: EvaluationState) -> tuple[str, str]:
@@ -159,7 +133,11 @@ def _fallback_repair_target(state: EvaluationState) -> tuple[str, str]:
             "Reviewer feedback mentions metrics or dimension scores, so selected metrics should be reconsidered.",
         )
 
-    if "context" in feedback.lower() or "definition" in feedback.lower() or "explain" in feedback.lower():
+    if (
+        "context" in feedback.lower()
+        or "definition" in feedback.lower()
+        or "explain" in feedback.lower()
+    ):
         return (
             "rag_retrieval",
             "Reviewer feedback suggests missing context or insufficient metric explanation.",
@@ -212,6 +190,9 @@ if __name__ == "__main__":
     from app.schemas import QualityResult
 
     state = EvaluationState(input_url="x")
+    state.owner = "example"
+    state.repo = "repo"
+    state.project_type = "AI Framework / Agent Framework"
     state.quality_result = QualityResult(
         passed=False,
         issues=["Report is too generic and suggestions are not actionable."],
@@ -219,7 +200,10 @@ if __name__ == "__main__":
     )
     state.review_feedback = "The report is too generic and suggestions are not actionable."
 
+    prompt = _build_repair_prompt(state)
     target, plan = _fallback_repair_target(state)
 
+    print("prompt loaded:", "Allowed repair_target values" in prompt)
+    print("placeholders replaced:", "{owner}" not in prompt and "{report}" not in prompt)
     print("fallback target:", target)
     print("fallback plan:", plan)
