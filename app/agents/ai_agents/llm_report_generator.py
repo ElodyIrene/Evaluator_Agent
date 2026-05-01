@@ -12,6 +12,7 @@ from app.agents.rag_retrieval import rag_retrieval_agent
 from app.agents.report_generator import report_generator_agent
 from app.agents.type_classifier import type_classifier_agent
 from app.config import settings
+from app.tools.reflection_memory import load_report_reflection_memory
 from app.schemas import EvaluationReport, EvaluationState
 
 
@@ -87,6 +88,21 @@ def _build_prompt(state: EvaluationState) -> str:
         "{rule_report}",
         _json_dumps(rule_report),
     )
+
+    reflection_memory = load_report_reflection_memory()
+
+    if reflection_memory:
+        prompt += """
+
+Reusable reflection memory from previous quality reviews:
+{reflection_memory}
+
+You should use this memory to avoid repeating previous report quality problems.
+Do not copy it verbatim. Apply it only when relevant to the current repository.
+""".replace(
+            "{reflection_memory}",
+            reflection_memory,
+        )
 
     if state.repair_plan:
         prompt += """
@@ -203,4 +219,5 @@ if __name__ == "__main__":
     print("risks:", state.report.risks if state.report else None)
     print("suggestions:", state.report.suggestions if state.report else None)
     print("errors:", state.errors)
+
 

@@ -1,11 +1,21 @@
 ﻿import json
 import re
+from pathlib import Path
 from typing import Any
 
 from langchain_openai import ChatOpenAI
 
 from app.config import settings
+from app.tools.reflection_memory import save_report_reflection_suggestions
 from app.schemas import EvaluationState, QualityResult
+
+
+PROMPT_PATH = Path("app/prompts/llm_quality_reviewer_prompt.md")
+
+
+def _load_prompt_template() -> str:
+    """Load the LLM quality reviewer prompt from a markdown file."""
+    return PROMPT_PATH.read_text(encoding="utf-8-sig")
 
 
 def _extract_json(text: str) -> dict[str, Any]:
@@ -53,51 +63,45 @@ def _create_llm() -> ChatOpenAI:
 
 
 def _build_review_prompt(state: EvaluationState) -> str:
-    """Build the prompt for LLM quality review."""
+    """Build the prompt for LLM quality review from prompt template."""
+    template = _load_prompt_template()
+
     report = state.report.model_dump(mode="json") if state.report else None
+
     selected_metrics = [
         metric.model_dump(mode="json")
         for metric in state.selected_metrics
     ]
+
     retrieved_context = [
         doc.model_dump(mode="json")
         for doc in state.retrieved_context
     ]
 
-    return f"""
-You are a strict quality reviewer for an AI-generated open-source project evaluation report.
+    rule_quality_result = (
+        state.quality_result.model_dump(mode="json")
+        if state.quality_result
+        else None
+    )
 
-Your job:
-Check whether the report is specific, evidence-based, internally consistent, and grounded in the selected metrics and retrieved context.
+    prompt = template.replace(
+        "{selected_metrics}",
+        _json_dumps(selected_metrics),
+    )
+    prompt = prompt.replace(
+        "{retrieved_context}",
+        _json_dumps(retrieved_context),
+    )
+    prompt = prompt.replace(
+        "{rule_quality_result}",
+        _json_dumps(rule_quality_result),
+    )
+    prompt = prompt.replace(
+        "{report}",
+        _json_dumps(report),
+    )
 
-You must check:
-1. Whether overall_score is between 0 and 100.
-2. Whether dimension_scores are reasonable.
-3. Whether summary is specific to the repository.
-4. Whether strengths are supported by metrics.
-5. Whether risks are specific and not generic.
-6. Whether suggestions are actionable.
-7. Whether the report avoids inventing unsupported facts.
-8. Whether data_sources are included.
-
-Selected metrics:
-{_json_dumps(selected_metrics)}
-
-Retrieved context:
-{_json_dumps(retrieved_context)}
-
-Report to review:
-{_json_dumps(report)}
-
-Return valid JSON only. Do not return Markdown.
-
-JSON schema:
-{{
-  "passed": true or false,
-  "issues": ["issue 1", "issue 2"],
-  "suggestions": ["suggestion 1", "suggestion 2"]
-}}
-"""
+    return prompt
 
 
 def _clean_reviewer_result(
@@ -133,6 +137,7 @@ def _clean_reviewer_result(
         cleaned_issues.append(issue)
 
     cleaned_suggestions: list[str] = []
+
     for suggestion in suggestions:
         suggestion_lower = suggestion.lower()
 
@@ -152,6 +157,7 @@ def _clean_reviewer_result(
         cleaned_suggestions.append(suggestion)
 
     return cleaned_issues, cleaned_suggestions
+
 
 def _save_review_feedback(state: EvaluationState) -> EvaluationState:
     """Save reviewer issues and suggestions into state.review_feedback."""
@@ -224,6 +230,8 @@ def llm_quality_reviewer_agent(state: EvaluationState) -> EvaluationState:
             suggestions=suggestions,
         )
 
+        save_report_reflection_suggestions(suggestions)
+
         state = _save_review_feedback(state)
 
     except Exception as error:
@@ -235,7 +243,9 @@ def llm_quality_reviewer_agent(state: EvaluationState) -> EvaluationState:
         if state.quality_result is None:
             state.quality_result = QualityResult(
                 passed=False,
-                issues=["LLM quality review failed and no rule-based quality result is available."],
+                issues=[
+                    "LLM quality review failed and no rule-based quality result is available."
+                ],
                 suggestions=["Retry later or inspect the report manually."],
             )
 
@@ -258,6 +268,4 @@ if __name__ == "__main__":
     print("suggestions:", state.quality_result.suggestions if state.quality_result else None)
     print("review_feedback:", state.review_feedback)
     print("errors:", state.errors)
-
-
 
