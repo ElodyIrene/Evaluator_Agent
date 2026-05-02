@@ -1,4 +1,4 @@
-# Python-generated files
+﻿# Python-generated files
 __pycache__/
 *.py[oc]
 build/
@@ -9,3 +9,7 @@ wheels/
 # Virtual environments
 .venv
 .env
+
+# Local RAG vector database
+.chroma/
+
