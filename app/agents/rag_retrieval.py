@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+from app.rag.embedding_service import DEFAULT_EMBEDDING_DIMENSION, DEFAULT_EMBEDDING_MODEL
 from app.rag.rag_service import retrieve_knowledge
 from app.schemas import EvaluationState, RetrievedDoc, SelectedMetric
 
@@ -40,10 +41,11 @@ def rag_retrieval_agent(state: EvaluationState) -> EvaluationState:
     Retrieve metric knowledge from the local RAG system.
 
     Current retrieval pipeline:
-    1. Vector search with local Chroma
-    2. BM25 keyword search
-    3. Hybrid fusion
-    4. Local rerank
+    1. Embedding with DashScope text-embedding-v4
+    2. Vector search with local Chroma
+    3. BM25 keyword search
+    4. Hybrid fusion
+    5. Local rerank
 
     Input:
         state.selected_metrics
@@ -53,6 +55,11 @@ def rag_retrieval_agent(state: EvaluationState) -> EvaluationState:
     """
     print("[RAG] Start retrieval.", flush=True)
     print("[RAG] retrieval mode: hybrid_search + local_rerank", flush=True)
+    print(
+        f"[RAG] embedding model: {DEFAULT_EMBEDDING_MODEL}, "
+        f"dimension: {DEFAULT_EMBEDDING_DIMENSION}",
+        flush=True,
+    )
     print("[RAG] vector retriever: Chroma", flush=True)
     print("[RAG] keyword retriever: BM25", flush=True)
 

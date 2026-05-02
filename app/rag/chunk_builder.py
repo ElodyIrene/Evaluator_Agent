@@ -1,8 +1,9 @@
 ﻿from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
-from app.rag.document_loader import load_markdown_documents
+from app.rag.document_loader import KnowledgeDocument, load_markdown_documents
 from app.rag.document_splitter import split_text
 
 
@@ -36,17 +37,62 @@ def build_knowledge_chunks(
     chunk_overlap: int = 120,
 ) -> list[KnowledgeChunk]:
     """
-    Load markdown documents and split them into RAG chunks.
-
-    Args:
-        knowledge_base_dir: Local folder containing markdown knowledge files.
-        chunk_size: Maximum character length of each chunk.
-        chunk_overlap: Number of overlapping characters between neighboring chunks.
-
-    Returns:
-        A list of KnowledgeChunk objects.
+    Load all markdown documents from a directory and split them into chunks.
     """
     documents = load_markdown_documents(knowledge_base_dir)
+    return build_chunks_from_documents(
+        documents=documents,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+    )
+
+
+def build_knowledge_chunks_from_file(
+    file_path: str | Path,
+    chunk_size: int = 800,
+    chunk_overlap: int = 120,
+) -> list[KnowledgeChunk]:
+    """
+    Load one markdown file and split it into chunks.
+
+    This is used by single-file indexing.
+    """
+    path = Path(file_path)
+
+    if not path.exists():
+        raise FileNotFoundError(f"Knowledge file not found: {path.resolve()}")
+
+    if not path.is_file():
+        raise IsADirectoryError(f"Knowledge path is not a file: {path.resolve()}")
+
+    if path.suffix.lower() != ".md":
+        raise ValueError(f"Only markdown files are supported for now: {path}")
+
+    content = path.read_text(encoding="utf-8").strip()
+
+    if not content:
+        return []
+
+    document = KnowledgeDocument(
+        source_path=path.as_posix(),
+        content=content,
+    )
+
+    return build_chunks_from_documents(
+        documents=[document],
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+    )
+
+
+def build_chunks_from_documents(
+    documents: list[KnowledgeDocument],
+    chunk_size: int = 800,
+    chunk_overlap: int = 120,
+) -> list[KnowledgeChunk]:
+    """
+    Split loaded documents into RAG chunks.
+    """
     chunks: list[KnowledgeChunk] = []
 
     for document in documents:

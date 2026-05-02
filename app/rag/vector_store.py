@@ -1,8 +1,5 @@
 ﻿from __future__ import annotations
 
-import hashlib
-import math
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -10,6 +7,11 @@ from typing import Any
 import chromadb
 
 from app.rag.chunk_builder import KnowledgeChunk
+from app.rag.embedding_service import (
+    DEFAULT_EMBEDDING_DIMENSION,
+    DEFAULT_EMBEDDING_MODEL,
+    get_embedding_service,
+)
 
 
 DEFAULT_PERSIST_DIR = ".chroma/evaluator_agent"
@@ -40,61 +42,35 @@ class VectorSearchResult:
     score: float
 
 
-class HashEmbedder:
-    """
-    A simple local embedder.
-
-    This is not a professional semantic embedding model.
-    It is a beginner-friendly local embedding method so we can build and verify
-    the RAG pipeline without calling any external API.
-
-    Important:
-    We manually create embeddings and pass them to Chroma.
-    This avoids depending on Chroma's custom embedding function interface.
-    """
-
-    def __init__(self, dimension: int = 384) -> None:
-        self.dimension = dimension
-
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return [self.embed_query(text) for text in texts]
-
-    def embed_query(self, text: str) -> list[float]:
-        vector = [0.0] * self.dimension
-        tokens = self._tokenize(text)
-
-        if not tokens:
-            return vector
-
-        for token in tokens:
-            digest = hashlib.sha256(token.encode("utf-8")).digest()
-            index = int.from_bytes(digest[:4], "big") % self.dimension
-            vector[index] += 1.0
-
-        norm = math.sqrt(sum(value * value for value in vector))
-
-        if norm == 0:
-            return vector
-
-        return [value / norm for value in vector]
-
-    def _tokenize(self, text: str) -> list[str]:
-        normalized = text.lower()
-        return re.findall(r"[a-z0-9_]+|[\u4e00-\u9fff]", normalized)
-
-
 def get_chroma_client(
     persist_dir: str | Path = DEFAULT_PERSIST_DIR,
 ) -> chromadb.PersistentClient:
     """
     Create a persistent Chroma client.
-
-    The database will be stored in the local project folder.
     """
     persist_path = Path(persist_dir)
     persist_path.mkdir(parents=True, exist_ok=True)
 
     return chromadb.PersistentClient(path=str(persist_path))
+
+
+def get_or_create_knowledge_collection(
+    persist_dir: str | Path = DEFAULT_PERSIST_DIR,
+    collection_name: str = DEFAULT_COLLECTION_NAME,
+):
+    """
+    Get the knowledge collection. Create it if it does not exist.
+    """
+    client = get_chroma_client(persist_dir)
+
+    return client.get_or_create_collection(
+        name=collection_name,
+        metadata={
+            "description": "Evaluator Agent local knowledge base",
+            "embedding_model": DEFAULT_EMBEDDING_MODEL,
+            "embedding_dimension": DEFAULT_EMBEDDING_DIMENSION,
+        },
+    )
 
 
 def rebuild_vector_store(
@@ -105,8 +81,12 @@ def rebuild_vector_store(
     """
     Rebuild the local vector store from RAG chunks.
 
-    This function deletes the old collection and creates a fresh one.
-    That keeps the beginner version easy to understand.
+    This deletes the old collection and creates a fresh one.
+    Use this when:
+    - embedding model changes
+    - embedding dimension changes
+    - chunk strategy changes
+    - metadata structure changes
     """
     client = get_chroma_client(persist_dir)
 
@@ -117,15 +97,45 @@ def rebuild_vector_store(
 
     collection = client.create_collection(
         name=collection_name,
-        metadata={"description": "Evaluator Agent local knowledge base"},
+        metadata={
+            "description": "Evaluator Agent local knowledge base",
+            "embedding_model": DEFAULT_EMBEDDING_MODEL,
+            "embedding_dimension": DEFAULT_EMBEDDING_DIMENSION,
+        },
     )
 
+    return add_chunks_to_collection(collection=collection, chunks=chunks)
+
+
+def add_chunks_to_vector_store(
+    chunks: list[KnowledgeChunk],
+    persist_dir: str | Path = DEFAULT_PERSIST_DIR,
+    collection_name: str = DEFAULT_COLLECTION_NAME,
+) -> int:
+    """
+    Add chunks to the existing vector store.
+
+    This does not delete old chunks. For single-file update,
+    call delete_chunks_by_source first.
+    """
+    collection = get_or_create_knowledge_collection(
+        persist_dir=persist_dir,
+        collection_name=collection_name,
+    )
+
+    return add_chunks_to_collection(collection=collection, chunks=chunks)
+
+
+def add_chunks_to_collection(collection, chunks: list[KnowledgeChunk]) -> int:
+    """
+    Add chunks into a Chroma collection.
+    """
     if not chunks:
         return 0
 
-    embedder = HashEmbedder()
+    embedding_service = get_embedding_service()
     documents = [chunk.content for chunk in chunks]
-    embeddings = embedder.embed_documents(documents)
+    embeddings = embedding_service.embed_documents(documents)
 
     collection.add(
         ids=[chunk.chunk_id for chunk in chunks],
@@ -135,12 +145,45 @@ def rebuild_vector_store(
             {
                 "source": chunk.source_path,
                 "chunk_index": chunk.chunk_index,
+                "embedding_model": DEFAULT_EMBEDDING_MODEL,
+                "embedding_dimension": DEFAULT_EMBEDDING_DIMENSION,
             }
             for chunk in chunks
         ],
     )
 
     return len(chunks)
+
+
+def delete_chunks_by_source(
+    source_path: str | Path,
+    persist_dir: str | Path = DEFAULT_PERSIST_DIR,
+    collection_name: str = DEFAULT_COLLECTION_NAME,
+) -> int:
+    """
+    Delete all chunks that came from one source file.
+
+    This is used before re-indexing a single updated file.
+    """
+    normalized_source = Path(source_path).as_posix()
+
+    collection = get_or_create_knowledge_collection(
+        persist_dir=persist_dir,
+        collection_name=collection_name,
+    )
+
+    existing = collection.get(
+        where={"source": normalized_source},
+        include=["metadatas"],
+    )
+
+    ids = existing.get("ids", [])
+
+    if not ids:
+        return 0
+
+    collection.delete(ids=ids)
+    return len(ids)
 
 
 def search_vector_store(
@@ -151,19 +194,12 @@ def search_vector_store(
 ) -> list[VectorSearchResult]:
     """
     Search the local vector store.
-
-    Args:
-        query: The search question or keywords.
-        top_k: How many chunks to retrieve.
-
-    Returns:
-        A list of search results.
     """
     client = get_chroma_client(persist_dir)
     collection = client.get_collection(name=collection_name)
 
-    embedder = HashEmbedder()
-    query_embedding = embedder.embed_query(query)
+    embedding_service = get_embedding_service()
+    query_embedding = embedding_service.embed_query(query)
 
     raw_results: dict[str, Any] = collection.query(
         query_embeddings=[query_embedding],
