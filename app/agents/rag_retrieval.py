@@ -37,7 +37,13 @@ def _build_rag_query(state: EvaluationState) -> str:
 
 def rag_retrieval_agent(state: EvaluationState) -> EvaluationState:
     """
-    Retrieve metric knowledge from the local Chroma RAG index.
+    Retrieve metric knowledge from the local RAG system.
+
+    Current retrieval pipeline:
+    1. Vector search with local Chroma
+    2. BM25 keyword search
+    3. Hybrid fusion
+    4. Local rerank
 
     Input:
         state.selected_metrics
@@ -46,6 +52,9 @@ def rag_retrieval_agent(state: EvaluationState) -> EvaluationState:
         state.retrieved_context
     """
     print("[RAG] Start retrieval.", flush=True)
+    print("[RAG] retrieval mode: hybrid_search + local_rerank", flush=True)
+    print("[RAG] vector retriever: Chroma", flush=True)
+    print("[RAG] keyword retriever: BM25", flush=True)
 
     if not state.selected_metrics:
         message = "Cannot retrieve RAG context because selected_metrics is empty."
@@ -83,9 +92,9 @@ def rag_retrieval_agent(state: EvaluationState) -> EvaluationState:
 
     state.retrieved_context = [
         RetrievedDoc(
-            title="Vector RAG Knowledge",
+            title="Hybrid RAG Knowledge",
             content=context,
-            source="local_chroma:knowledge_base",
+            source="local_chroma_bm25_rerank:knowledge_base",
         )
     ]
 
